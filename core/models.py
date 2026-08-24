@@ -319,6 +319,26 @@ class Transaction(models.Model):
         return f"Transaction {self.transaction_id} ({self.amount} NGN)"
 
 
+def resolve_combined_device_location_flag(
+    device_change_flag, sim_change_flag, location_change_flag
+):
+    """
+    Single source of truth for ``combined_device_location_flag``.
+
+    DELIBERATE DESIGN CHOICE: True ONLY when a device-or-SIM change happens
+    TOGETHER WITH a location change -- never on either alone. Families share
+    phones and people swap SIMs routinely; neither alone implies fraud. But
+    new hardware/SIM appearing together with a new network location is the
+    classic takeover signature.
+
+    This lives as a standalone function (not inline in ``save()``) because
+    the batch feature engine persists rows via ``bulk_create()``, which
+    BYPASSES ``save()``. Both paths call THIS function, so the invariant has
+    exactly one definition regardless of how a row reaches the database.
+    """
+    return bool((device_change_flag or sim_change_flag) and location_change_flag)
+
+
 class BehavioralFeatures(models.Model):
     """
     Engineered feature vector computed at scoring time, attached 1:1 to a
@@ -417,14 +437,16 @@ class BehavioralFeatures(models.Model):
     def save(self, *args, **kwargs):
         """
         Enforce the invariant behind combined_device_location_flag at write
-        time so the semantic documented above can never drift, regardless of
-        which caller sets the individual flags.
+        time by delegating to the shared resolver, so the semantic
+        documented above can never drift regardless of which caller sets
+        the individual flags.
         """
-        credential_context_changed = (
-            self.device_change_flag or self.sim_change_flag
-        )
-        self.combined_device_location_flag = bool(
-            credential_context_changed and self.location_change_flag
+        self.combined_device_location_flag = (
+            resolve_combined_device_location_flag(
+                self.device_change_flag,
+                self.sim_change_flag,
+                self.location_change_flag,
+            )
         )
         super().save(*args, **kwargs)
 
@@ -442,10 +464,12 @@ class FraudLabel(models.Model):
     ATTACK_CREDENTIAL_THEFT = "credential_theft"
     ATTACK_SIM_SWAP = "sim_swap"
     ATTACK_LOW_AND_SLOW = "patient_low_and_slow"
+    ATTACK_SIM_SWAP_TAKEOVER = "sim_swap_takeover"
     ATTACK_TYPE_CHOICES = [
         (ATTACK_CREDENTIAL_THEFT, "Credential theft"),
         (ATTACK_SIM_SWAP, "SIM swap"),
         (ATTACK_LOW_AND_SLOW, "Patient low-and-slow drain"),
+        (ATTACK_SIM_SWAP_TAKEOVER, "SIM swap takeover (USSD-native)"),
     ]
 
     # The labelled session.
