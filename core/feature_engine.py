@@ -119,12 +119,20 @@ class UserHistory:
         self.recent_timestamps.append(session.timestamp)
 
 
+def _minute_distance_circular(a, b):
+    """Distance between two minute-of-day values on a 24h clock -- 00:00 is
+    1 minute from 23:59, not 24 hours. Without this, post-midnight logins
+    near a late-evening window would be absurdly over-penalised."""
+    d = abs(a - b) % 1440
+    return min(d, 1440 - d)
+
+
 def _hour_deviation(typical_windows, timestamp):
     """
     0.0 inside any window; otherwise distance in hours to the nearest
-    window edge, linearly scaled so >=6h outside saturates at 1.0.
-    Uses BankUser.typical_login_hours directly -- it exists even for users
-    with zero session history.
+    window edge (midnight-aware), linearly scaled so >=6h outside
+    saturates at 1.0. Uses BankUser.typical_login_hours directly -- it
+    exists even for users with zero session history.
     """
     minute_of_day = timestamp.hour * 60 + timestamp.minute
     best = None
@@ -132,7 +140,10 @@ def _hour_deviation(typical_windows, timestamp):
         start, end = lo * 60, hi * 60 + 59  # window end-hour inclusive
         if start <= minute_of_day <= end:
             return 0.0
-        d = min(abs(minute_of_day - start), abs(minute_of_day - end))
+        d = min(
+            _minute_distance_circular(minute_of_day, start),
+            _minute_distance_circular(minute_of_day, end),
+        )
         best = d if best is None else min(best, d)
     return min(1.0, best / HOUR_CAP_MINUTES)
 
