@@ -17,6 +17,13 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from core.views import SessionEventView
+
 urlpatterns = [
     path('admin/', admin.site.urls),
+    # One view class, channel bound per-URL (see core/views.py docstring).
+    path('api/session-event/',
+         SessionEventView.as_view(channel='app'), name='session-event'),
+    path('api/ussd-event/',
+         SessionEventView.as_view(channel='ussd'), name='ussd-event'),
 ]
