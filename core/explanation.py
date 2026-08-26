@@ -81,6 +81,23 @@ REASON_TEMPLATES = {
     "ml_model_risk":
         "the overall pattern of this session looked risky based on how you "
         "usually bank",
+    # Offline degraded-mode signal codes (offline_fallback): same customer
+    # truths as their online counterparts, worded for the coarser evidence
+    # a cached last-known snapshot can actually support.
+    "device_or_sim_mismatch":
+        "it came from a phone or SIM card we don't recognize from your "
+        "account",
+    "hour_outside_range":
+        "it happened at a time you don't usually bank",
+    "amount_outside_range":
+        "the amount was unusual compared to your typical transfers",
+    # Context-only code from offline_fallback's DegradedDecision: explains
+    # WHY THE CHECK WAS LIMITED, not why the session looked risky, so it is
+    # excluded from top-2 ranking (same treatment as context_normal_override)
+    # and appended as a transparency clause instead.
+    "offline_degraded_check":
+        "we could only check this with limited information while our "
+        "systems were temporarily unavailable",
     # context_normal_override intentionally has NO template here: it softens
     # a decision internally and is surfaced via the analyst note instead.
 }
@@ -119,16 +136,33 @@ def explain_decision(decision):
     """
     verdict = decision.verdict
     override_fired = bool(getattr(decision, "context_override_applied", False))
+    reason_codes = [r["code"] for r in decision.triggered_reasons]
+    # Degraded mode (offline_fallback): the decision was made with a cached
+    # snapshot only. Customers get an honest transparency clause; the code
+    # itself never competes for the top-2 reason slots.
+    degraded = "offline_degraded_check" in reason_codes
+    _degraded_clause = (
+        " - we could only check this with limited information while our "
+        "systems were temporarily unavailable"
+    )
 
     if verdict == "approve":
-        customer = (
-            "This transfer was approved - nothing about it looked unusual "
-            "for your account."
-        )
+        if degraded:
+            customer = (
+                "This transfer was approved based on a limited check while "
+                "our systems were temporarily unavailable - nothing about "
+                "it looked unusual."
+            )
+        else:
+            customer = (
+                "This transfer was approved - nothing about it looked "
+                "unusual for your account."
+            )
     else:
         visible = [
             r for r in decision.triggered_reasons
-            if r["code"] != "context_normal_override"
+            if r["code"] not in ("context_normal_override",
+                                 "offline_degraded_check")
         ]
         # Ranking: concrete rule causes lead (by weight); the ML phrase is a
         # DERIVED SUMMARY of those same signals, not independent evidence,
@@ -155,10 +189,12 @@ def explain_decision(decision):
 
         if verdict == "challenge":
             customer = (
-                "We asked for extra verification on this transfer because "
-                f"{clause}."
+                f"We asked for extra verification on this transfer because "
+                f"{clause}{_degraded_clause if degraded else ''}."
             )
         else:  # block
+            # Degraded mode can never produce a block (hard-capped at
+            # challenge in offline_fallback), so no degraded branch needed.
             customer = (
                 f"This transfer was stopped because {clause}. If this was "
                 "you, please contact your bank to confirm your identity "
