@@ -39,6 +39,8 @@ KNOWN LIMITATION (for the write-up's honest-failure-analysis section):
   duration baseline; users with less history get a default 0.0 ("cannot
   judge yet"), meaning very new USSD customers are temporarily blind to
   this particular signal rather than falsely flagged by it.
+  keystroke_deviation_score needs >= 3 prior app sessions with keystroke
+  data; users with less history get NULL (cannot judge yet).
 
 Usage:
     python core/feature_engine.py            # batch over whole dataset
@@ -68,6 +70,7 @@ if __name__ == "__main__":
 from core.models import (  # noqa: E402
     BehavioralFeatures,
     FraudLabel,
+    KeystrokeDynamics,
     Session,
     resolve_combined_device_location_flag,
 )
@@ -75,6 +78,7 @@ from core.models import (  # noqa: E402
 BATCH_SIZE = 500  # bulk_create chunk size
 VELOCITY_WINDOW = timedelta(minutes=5)
 MIN_USSD_BASELINE_SESSIONS = 3  # below this: not enough history to judge
+MIN_KEYSTROKE_BASELINE_SESSIONS = 3  # below this: not enough keystroke history
 HOUR_CAP_MINUTES = 360  # >=6h outside any window => hour_deviation 1.0
 
 
@@ -93,6 +97,10 @@ class UserHistory:
         self.sim_counts = Counter()
         self.geohashes = set()
         self.ussd_durations = []
+        # Keystroke dynamics: app-only biometrics for rhythm deviation scoring.
+        self.keystroke_hold_times = []
+        self.keystroke_intervals = []
+        self.keystroke_cpm = []
         # Timestamps kept for velocity; pruned from the left as time moves.
         self.recent_timestamps = deque()
 
@@ -116,6 +124,12 @@ class UserHistory:
         self.geohashes.add(session.location_geohash)
         if session.channel == "ussd" and session.session_duration_seconds:
             self.ussd_durations.append(session.session_duration_seconds)
+        # Record keystroke dynamics for app sessions (if available).
+        ks = session.keystroke_dynamics.first()
+        if ks is not None:
+            self.keystroke_hold_times.append(ks.avg_hold_time_ms)
+            self.keystroke_intervals.append(ks.avg_interval_ms)
+            self.keystroke_cpm.append(ks.typing_speed_cpm)
         self.recent_timestamps.append(session.timestamp)
 
 
@@ -232,6 +246,35 @@ def compute_features(session, history=None):
             elif dur > mu:
                 menu_score = 1.0  # zero-variance history, longer than ALL
 
+    # --- Keystroke rhythm deviation (app only) ------------------------------
+    keystroke_score = None
+    if session.channel == "app":
+        # Look for this session's keystroke data.
+        ks = session.keystroke_dynamics.first()
+        if ks is not None and len(history.keystroke_cpm) >= MIN_KEYSTROKE_BASELINE_SESSIONS:
+            # Composite z-score across three keystroke dimensions, averaged
+            # into a single 0.0-1.0 deviation signal.
+            z_scores = []
+            for current, history_vals in [
+                (ks.avg_hold_time_ms, history.keystroke_hold_times),
+                (ks.avg_interval_ms, history.keystroke_intervals),
+                (ks.typing_speed_cpm, history.keystroke_cpm),
+            ]:
+                mu = mean(history_vals)
+                sigma = pstdev(history_vals)
+                if sigma > 0:
+                    z_scores.append((current - mu) / sigma)
+                elif current != mu:
+                    z_scores.append(1.0)
+                else:
+                    z_scores.append(0.0)
+            # Average absolute z-scores; within ~1 SD of normal -> 0,
+            # saturating at 1.0 around +3 SD composite.
+            avg_abs_z = mean(abs(z) for z in z_scores) if z_scores else 0.0
+            keystroke_score = max(0.0, min(1.0, (avg_abs_z - 1.0) / 2.0))
+        else:
+            keystroke_score = None  # not enough data yet
+
     features = BehavioralFeatures(
         session=session,
         hour_deviation_score=_hour_deviation(
@@ -244,6 +287,7 @@ def compute_features(session, history=None):
         new_recipient_flag=new_recipient,
         velocity_count_5min=velocity,
         menu_timing_deviation_score=menu_score,
+        keystroke_deviation_score=keystroke_score,
     )
     # Delegate to the model's single-source-of-truth resolver -- identical
     # rule to BehavioralFeatures.save(); NOT a re-implementation.
@@ -262,7 +306,7 @@ def load_user_history(user_id, before):
     history = UserHistory()
     priors = Session.objects.filter(
         user_id=user_id, timestamp__lt=before
-    ).order_by("timestamp")
+    ).prefetch_related("keystroke_dynamics").order_by("timestamp")
     for s in priors:
         history.observe(s)
     return history
@@ -317,7 +361,7 @@ def compute_features_for_all_sessions(batch_size=BATCH_SIZE):
 
     sessions = (
         Session.objects.select_related("user")
-        .prefetch_related("transactions")
+        .prefetch_related("transactions", "keystroke_dynamics")
         .order_by("user_id", "timestamp")
     )
 

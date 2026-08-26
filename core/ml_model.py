@@ -78,6 +78,7 @@ FEATURE_COLUMNS = [
     "new_recipient_flag",
     "velocity_count_5min",
     "menu_timing_deviation_score",  # null -> 0.0 (app has no USSD timing)
+    "keystroke_deviation_score",    # null -> 0.0 (USSD or early app sessions)
 ]
 
 

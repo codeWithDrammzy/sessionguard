@@ -68,6 +68,7 @@ WEIGHTS = {
     "hour_deviation_max": 15,
     "amount_deviation_max": 20,
     "menu_timing_deviation_max": 15,
+    "keystroke_deviation_max": 12,
     # Per EXTRA transaction beyond the first inside the 5-minute window.
     "velocity_per_extra_session": 8,
     # Deliberately tiny: new recipient alone is normal life (brief warning).
@@ -144,6 +145,14 @@ def score_session(features):
             round(
                 features.menu_timing_deviation_score
                 * WEIGHTS["menu_timing_deviation_max"]
+            ),
+        )
+    if features.keystroke_deviation_score is not None:
+        add(
+            "keystroke_deviation",
+            round(
+                features.keystroke_deviation_score
+                * WEIGHTS["keystroke_deviation_max"]
             ),
         )
 

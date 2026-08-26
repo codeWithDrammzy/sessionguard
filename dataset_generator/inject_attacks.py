@@ -75,6 +75,7 @@ import uuid
 from collections import Counter, defaultdict
 from datetime import timedelta
 from decimal import Decimal
+from statistics import mean
 
 # --- Django bootstrap (same pattern as sibling generators) ------------------
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,7 +88,7 @@ django.setup()
 
 from django.utils import timezone  # noqa: E402
 
-from core.models import BankUser, FraudLabel, Session, Transaction  # noqa: E402
+from core.models import BankUser, FraudLabel, KeystrokeDynamics, Session, Transaction  # noqa: E402
 
 SEED = 44  # third independent stream (42 users, 43 sessions)
 TARGET_COUNT = 30  # 12% of the 250-user population, app-capable pool
@@ -141,7 +142,7 @@ class VictimProfile:
     """Aggregated straight from the victim's stored Session rows."""
 
     def __init__(self, user):
-        sessions = list(user.sessions.all())
+        sessions = list(user.sessions.prefetch_related("keystroke_dynamics").all())
         if not sessions:
             raise ValueError(
                 f"user {user.user_id} has no baseline history; "
@@ -156,7 +157,7 @@ class VictimProfile:
         self.real_sim = Counter(s.sim_id for s in sessions).most_common(1)[0][0]
 
         # Geohashes actually used, dominant first, plus the exact
-        # network identifiers observed TOGETHER WITH each geohash -- so a
+        # network identifiers observed TOGETHER with each geohash -- so a
         # patient attack can reuse a coherent (location, network) pair
         # instead of inventing an inconsistent mashup.
         geo_counter = Counter(s.location_geohash for s in sessions)
@@ -175,6 +176,19 @@ class VictimProfile:
         self.forbidden_geo = set(self.geohashes_by_rank)
 
         self.user = user
+
+        # Keystroke baseline from app sessions (for generating mismatched
+        # attack keystroke dynamics).
+        ks_hold_times, ks_intervals, ks_cpm = [], [], []
+        for s in sessions:
+            ks = s.keystroke_dynamics.first()
+            if ks is not None:
+                ks_hold_times.append(ks.avg_hold_time_ms)
+                ks_intervals.append(ks.avg_interval_ms)
+                ks_cpm.append(ks.typing_speed_cpm)
+        self.keystroke_hold_mean = mean(ks_hold_times) if ks_hold_times else 150.0
+        self.keystroke_interval_mean = mean(ks_intervals) if ks_intervals else 200.0
+        self.keystroke_cpm_mean = mean(ks_cpm) if ks_cpm else 250.0
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +295,15 @@ def build_obvious_attack(rng, profile, now):
         attack_type=FraudLabel.ATTACK_CREDENTIAL_THEFT,
         is_legitimate_anomaly=False,
     )
-    return session, tx, label, ratio
+    # Obvious keystroke mismatch: attacker types MUCH faster (scripted/bot),
+    # dramatically different from the victim's natural rhythm.
+    keystroke = KeystrokeDynamics(
+        session=session,
+        avg_hold_time_ms=max(20.0, profile.keystroke_hold_mean * rng.uniform(0.3, 0.5)),
+        avg_interval_ms=max(30.0, profile.keystroke_interval_mean * rng.uniform(0.2, 0.4)),
+        typing_speed_cpm=profile.keystroke_cpm_mean * rng.uniform(2.0, 3.5),
+    )
+    return session, tx, label, ratio, keystroke
 
 
 def build_patient_attack(rng, profile, now):
@@ -292,6 +314,11 @@ def build_patient_attack(rng, profile, now):
     into the victim's routine, amount under the radar. Only the device
     change betrays the takeover -- exactly the pattern that defeats naive
     amount/location/hour rulesets.
+
+    Keystroke dynamics are subtly different: the attacker observed the
+    victim's rhythm but can't replicate it exactly. Hold times and
+    intervals are shifted ~15-30% from the victim's mean -- noticeable
+    in aggregate but not obviously jarring on any single measurement.
     """
     user = profile.user
 
@@ -328,7 +355,26 @@ def build_patient_attack(rng, profile, now):
         attack_type=FraudLabel.ATTACK_LOW_AND_SLOW,
         is_legitimate_anomaly=False,
     )
-    return session, tx, label, ratio
+    # Subtle keystroke mismatch: attacker observed the victim's rhythm but
+    # can't replicate it exactly. Shifted ~15-30% from victim's mean.
+    shift = rng.uniform(0.15, 0.30)
+    direction = rng.choice([-1, 1])  # could be faster OR slower
+    keystroke = KeystrokeDynamics(
+        session=session,
+        avg_hold_time_ms=max(
+            30.0,
+            profile.keystroke_hold_mean * (1.0 + direction * shift)
+        ),
+        avg_interval_ms=max(
+            50.0,
+            profile.keystroke_interval_mean * (1.0 + direction * shift)
+        ),
+        typing_speed_cpm=max(
+            80.0,
+            profile.keystroke_cpm_mean * (1.0 - direction * shift)
+        ),
+    )
+    return session, tx, label, ratio, keystroke
 
 
 def build_sim_swap_attack(rng, profile, now, obvious):
@@ -429,9 +475,9 @@ def main():
     if stale.count():
         print(
             f"WARNING: deleting {stale.count()} previously injected attack "
-            f"session(s) (cascades to their transactions, features -- "
-            f"including stamped menu-timing rows -- and fraud-labels). "
-            f"Baseline history is NOT touched."
+            f"session(s) (cascades to their transactions, keystroke dynamics, "
+            f"features -- including stamped menu-timing rows -- and "
+            f"fraud-labels). Baseline history is NOT touched."
         )
         stale.delete()
 
@@ -448,7 +494,7 @@ def main():
         targets[n_obvious:],
     )
 
-    sessions, transactions, labels = [], [], []
+    sessions, transactions, labels, keystrokes = [], [], [], []
     stats = {
         "credential_theft (app)": [],
         "patient_low_and_slow (app)": [],
@@ -456,13 +502,15 @@ def main():
     }
 
     for user in obvious_targets:
-        s, tx, lbl, ratio = build_obvious_attack(rng, VictimProfile(user), now)
+        s, tx, lbl, ratio, ks = build_obvious_attack(rng, VictimProfile(user), now)
         sessions.append(s); transactions.append(tx); labels.append(lbl)
+        keystrokes.append(ks)
         stats["credential_theft (app)"].append(ratio)
 
     for user in patient_targets:
-        s, tx, lbl, ratio = build_patient_attack(rng, VictimProfile(user), now)
+        s, tx, lbl, ratio, ks = build_patient_attack(rng, VictimProfile(user), now)
         sessions.append(s); transactions.append(tx); labels.append(lbl)
+        keystrokes.append(ks)
         stats["patient_low_and_slow (app)"].append(ratio)
 
     # --- USSD-only pool: sim_swap_takeover ---------------------------------
@@ -492,6 +540,7 @@ def main():
         stats["sim_swap_takeover (ussd)"].append(ratio)
 
     Session.objects.bulk_create(sessions)
+    KeystrokeDynamics.objects.bulk_create(keystrokes)
     Transaction.objects.bulk_create(transactions)
     FraudLabel.objects.bulk_create(labels)
 
@@ -519,6 +568,7 @@ def print_summary(stats, obvious_targets, patient_targets, n_ussd_targets):
           f"{len(stats['patient_low_and_slow (app)'])}")
     print(f"  sim_swap_takeover (ussd)    : "
           f"{len(stats['sim_swap_takeover (ussd)'])}")
+    print(f"Keystroke dynamics records    : {KeystrokeDynamics.objects.count()}")
     print(f"All attacks carried a transaction: yes (1 each)")
     print()
     print("Amount vs victim's typical_transfer_max:")

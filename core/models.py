@@ -482,6 +482,18 @@ class BehavioralFeatures(models.Model):
         help_text="USSD menu-navigation timing deviation; NULL on app sessions.",
     )
 
+    # App-only signal: how much keystroke rhythm deviates from the user's norm.
+    # NULL for USSD sessions and for the first few app sessions before a
+    # baseline is established.
+    keystroke_deviation_score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Keystroke rhythm deviation score (0.0-1.0); NULL for USSD "
+            "or first few app sessions."
+        ),
+    )
+
     # When this feature vector was computed (audit trail).
     computed_at = models.DateTimeField(
         auto_now_add=True,
@@ -506,6 +518,47 @@ class BehavioralFeatures(models.Model):
             )
         )
         super().save(*args, **kwargs)
+
+
+class KeystrokeDynamics(models.Model):
+    """
+    Per-keystroke biometrics recorded during an app session.
+
+    NULL for USSD sessions (feature phones have no keyboard API) and for
+    sessions where the client didn't report timing data.  A user's
+    historical rows build the baseline against which future sessions are
+    scored via causal z-score (same pattern as menu_timing_deviation_score).
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="keystroke_dynamics",
+    )
+    avg_hold_time_ms = models.FloatField(
+        help_text="Mean key hold duration in milliseconds.",
+    )
+    avg_interval_ms = models.FloatField(
+        help_text="Mean inter-key interval in milliseconds.",
+    )
+    typing_speed_cpm = models.FloatField(
+        help_text="Typing speed in characters per minute.",
+    )
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-recorded_at"]
+        indexes = [
+            models.Index(fields=["session"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"KeystrokeDynamics({self.session_id} "
+            f"hold={self.avg_hold_time_ms:.1f}ms "
+            f"cpm={self.typing_speed_cpm:.0f})"
+        )
 
 
 class FraudLabel(models.Model):

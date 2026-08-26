@@ -62,6 +62,7 @@ from django.utils import timezone  # noqa: E402
 from core.models import (  # noqa: E402
     BankUser,
     BehavioralFeatures,
+    KeystrokeDynamics,
     Session,
     Transaction,
 )
@@ -105,6 +106,12 @@ class UserContext:
         self.locations = [self._make_location(rng), self._make_location(rng)]
 
         self.last_transaction_dt = None  # for velocity-style gap computation
+
+        # Per-user keystroke baseline: consistent typing rhythm across sessions,
+        # with per-session jitter to model natural variation.
+        self.keystroke_cpm = rng.uniform(150.0, 350.0)  # chars per minute
+        self.keystroke_hold_ms = rng.uniform(80.0, 200.0)  # key hold duration
+        self.keystroke_interval_ms = rng.uniform(100.0, 300.0)  # inter-key gap
 
     @staticmethod
     def _make_location(rng):
@@ -316,15 +323,33 @@ def main():
             "No BankUser records found -- run generate_users.py first."
         )
 
-    all_sessions, all_transactions = [], []
+    all_sessions, all_transactions, all_keystrokes = [], [], []
+    user_contexts = {}
     for user in users:
         ctx = UserContext(rng, user)
+        user_contexts[user.user_id] = ctx
         sessions = build_sessions_for_user(rng, ctx, now)
         transactions = build_transactions_for_user(rng, ctx, sessions)
+        # Generate KeystrokeDynamics for app sessions using this user's
+        # consistent typing rhythm with per-session jitter.
+        for session in sessions:
+            if session.channel == "app":
+                cpm = max(50.0, ctx.keystroke_cpm + rng.gauss(0, 15.0))
+                hold = max(30.0, ctx.keystroke_hold_ms + rng.gauss(0, 10.0))
+                interval = max(50.0, ctx.keystroke_interval_ms + rng.gauss(0, 12.0))
+                all_keystrokes.append(
+                    KeystrokeDynamics(
+                        session=session,
+                        avg_hold_time_ms=hold,
+                        avg_interval_ms=interval,
+                        typing_speed_cpm=cpm,
+                    )
+                )
         all_sessions.extend(sessions)
         all_transactions.extend(transactions)
 
     Session.objects.bulk_create(all_sessions)
+    KeystrokeDynamics.objects.bulk_create(all_keystrokes)
     Transaction.objects.bulk_create(all_transactions)
 
     print_summary(now, users, all_sessions, all_transactions)
@@ -357,6 +382,7 @@ def print_summary(now, users, sessions, transactions):
         1 for t in transactions if t.time_since_last_transaction_seconds is None
     )
     durations = [s.session_duration_seconds for s in sessions]
+    keystroke_count = KeystrokeDynamics.objects.count()
 
     def pct(n, d):
         return f"{100.0 * n / d:.1f}%" if d else "n/a"
@@ -373,6 +399,7 @@ def print_summary(now, users, sessions, transactions):
     print(f"  channel split               : app={channels.get('app', 0)}  "
           f"ussd={channels.get('ussd', 0)}")
     print(f"  secondary-location sessions : {secondary_share} ({pct(secondary_share, total_sessions)})")
+    print(f"Keystroke dynamics records    : {keystroke_count}")
     print(f"Transactions created          : {total_tx}")
     print(f"  new-recipient transfers     : {new_recips} ({pct(new_recips, total_tx)})")
     print(f"  NULL gap (first-ever tx)    : {null_gaps}")

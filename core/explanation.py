@@ -71,6 +71,8 @@ REASON_TEMPLATES = {
         "the amount was unusual compared to your typical transfers",
     "menu_timing_deviation":
         "the session moved through the menus differently from your usual pace",
+    "keystroke_deviation":
+        "the typing pattern was different from how you usually type",
     "velocity_burst":
         "there were several attempts in a short space of time",
     # Low-weight by design; must never read as the deciding factor on its own.

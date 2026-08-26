@@ -55,6 +55,7 @@ import os
 import random
 import sys
 from decimal import Decimal
+from statistics import mean
 
 # --- Django bootstrap (same pattern as sibling generators) ------------------
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -79,7 +80,7 @@ from inject_attacks import (  # noqa: E402
 
 from django.utils import timezone  # noqa: E402
 
-from core.models import BankUser, FraudLabel, Session, Transaction  # noqa: E402
+from core.models import BankUser, FraudLabel, KeystrokeDynamics, Session, Transaction  # noqa: E402
 
 SEED = 45  # fourth independent stream
 FAMILY_CASES = 6  # category A
@@ -104,6 +105,9 @@ def build_family_session(rng, profile, now):
     silent while behavioural context (hour, amount, beneficiary) shifts.
     This is the case the combined_device_location_flag invariant exists
     to protect from false positives.
+
+    Keystroke dynamics differ because the RELATIVE is typing, not the
+    owner -- a documented honest limitation of keystroke-based detection.
     """
     user = profile.user
 
@@ -159,7 +163,23 @@ def build_family_session(rng, profile, now):
         attack_type=None,
         is_legitimate_anomaly=True,
     )
-    return session, tx, label
+    # Keystroke dynamics: the relative types with a DIFFERENT rhythm.
+    # This is an honest limitation -- keystroke detection cannot separate
+    # "same phone, different person" from "different phone, same person"
+    # without additional context.
+    keystroke = KeystrokeDynamics(
+        session=session,
+        avg_hold_time_ms=max(
+            30.0, profile.keystroke_hold_mean * rng.uniform(0.6, 1.5)
+        ),
+        avg_interval_ms=max(
+            50.0, profile.keystroke_interval_mean * rng.uniform(0.5, 1.6)
+        ),
+        typing_speed_cpm=max(
+            80.0, profile.keystroke_cpm_mean * rng.uniform(0.5, 1.8)
+        ),
+    )
+    return session, tx, label, keystroke
 
 
 def build_simswap_session(rng, profile, now):
@@ -242,7 +262,8 @@ def build_simswap_session(rng, profile, now):
         attack_type=None,
         is_legitimate_anomaly=True,
     )
-    return session, tx, label
+    # No keystroke change: same person typing on a replacement device.
+    return session, tx, label, None
 
 
 def main():
@@ -254,8 +275,8 @@ def main():
         print(
             f"WARNING: deleting {stale.count()} previously injected "
             f"legitimate-anomaly session(s) (cascades to their "
-            f"transactions/fraud-labels). Baseline and attack sessions "
-            f"are NOT touched."
+            f"transactions/keystroke-dynamics/fraud-labels). Baseline and "
+            f"attack sessions are NOT touched."
         )
         stale.delete()
 
@@ -280,16 +301,21 @@ def main():
     remaining = [u for u in everyone if u not in family_targets]
     simswap_targets = rng.sample(remaining, SIMSWAP_CASES)
 
-    sessions, transactions, labels = [], [], []
+    sessions, transactions, labels, keystrokes = [], [], [], []
     for user in family_targets:
-        s, tx, lbl = build_family_session(rng, VictimProfile(user), now)
+        s, tx, lbl, ks = build_family_session(rng, VictimProfile(user), now)
         sessions.append(s); transactions.append(tx); labels.append(lbl)
+        if ks is not None:
+            keystrokes.append(ks)
 
     for user in simswap_targets:
-        s, tx, lbl = build_simswap_session(rng, VictimProfile(user), now)
+        s, tx, lbl, ks = build_simswap_session(rng, VictimProfile(user), now)
         sessions.append(s); transactions.append(tx); labels.append(lbl)
+        if ks is not None:
+            keystrokes.append(ks)
 
     Session.objects.bulk_create(sessions)
+    KeystrokeDynamics.objects.bulk_create(keystrokes)
     Transaction.objects.bulk_create(transactions)
     FraudLabel.objects.bulk_create(labels)
 
