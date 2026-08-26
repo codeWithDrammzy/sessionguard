@@ -1,0 +1,410 @@
+{% comment %}
+DEMO ONLY -- Control Room dashboard for live presentations.
+Self-contained vanilla HTML/CSS/JS: no build step, no dependencies.
+{% endcomment %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SessionGuard &mdash; Control Room</title>
+<style>
+  :root {
+    --bg: #0d1b2a;
+    --card: #1b263b;
+    --card-border: #24344d;
+    --accent: #6fffe9;
+    --text: #ffffff;
+    --muted: #cbd5e1;
+    --approve: #059669;
+    --challenge: #ca8a04;
+    --block: #dc2626;
+    --online: #059669;
+    --offline: #dc2626;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    min-height: 100vh;
+    padding: 28px 32px 48px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px; margin-bottom: 28px; flex-wrap: wrap;
+  }
+  .brand h1 {
+    font-size: 30px; font-weight: 700; letter-spacing: 0.3px;
+  }
+  .brand h1 span { color: var(--accent); }
+  .brand p { color: var(--muted); margin-top: 6px; font-size: 15px; }
+
+  /* ---------- outage toggle ---------- */
+  .net-toggle {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 14px; padding: 14px 18px;
+  }
+  .switch { position: relative; width: 52px; height: 28px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0; cursor: pointer;
+    background: var(--online); border-radius: 999px;
+    transition: background 0.2s ease;
+  }
+  .slider:before {
+    content: ""; position: absolute; height: 22px; width: 22px;
+    left: 3px; top: 3px; background: #fff; border-radius: 50%;
+    transition: transform 0.2s ease;
+  }
+  .switch input:checked + .slider { background: var(--offline); }
+  .switch input:checked + .slider:before { transform: translateX(24px); }
+  .net-label { line-height: 1.25; }
+  .net-label .state { font-weight: 700; font-size: 15px; color: var(--online); }
+  .net-label.offline .state { color: var(--offline); }
+  .net-label small { display: block; color: var(--muted); font-size: 12px; }
+
+  /* ---------- scenarios ---------- */
+  .section-title {
+    font-size: 12px; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--muted); margin: 6px 0 12px;
+  }
+  .scenarios {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px;
+    margin-bottom: 28px;
+  }
+  .scenario-btn {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 14px; color: var(--text); cursor: pointer;
+    padding: 16px 16px 14px; text-align: left; min-height: 96px;
+    display: flex; flex-direction: column; justify-content: space-between;
+    gap: 10px; transition: transform 0.08s ease, border-color 0.15s ease;
+    font-family: inherit;
+  }
+  .scenario-btn:hover:not(:disabled) {
+    transform: translateY(-2px); border-color: var(--accent);
+  }
+  .scenario-btn:disabled { opacity: 0.45; cursor: wait; }
+  .scenario-btn .label { font-size: 15px; font-weight: 600; line-height: 1.3; }
+  .channel-tag {
+    align-self: flex-start; font-size: 11px; letter-spacing: 1px;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 6px;
+    border: 1px solid var(--accent); color: var(--accent);
+  }
+  .channel-tag.ussd { border-color: #f59e0b; color: #f59e0b; }
+
+  /* ---------- results ---------- */
+  .results { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .panel {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 16px; overflow: hidden; min-height: 380px;
+    display: flex; flex-direction: column;
+  }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 18px; border-bottom: 1px solid var(--card-border);
+  }
+  .panel-head h2 { font-size: 15px; font-weight: 600; }
+  .panel-head small { color: var(--muted); }
+  .placeholder {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 14px; padding: 24px; text-align: center;
+  }
+
+    /* ---------- customer view: banking-app notification ---------- */
+  .notif {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 26px;
+  }
+  .phone {
+    width: 100%; max-width: 400px; border-radius: 22px;
+    border: 1px solid #2c3e57; background: #10233a;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.45); overflow: hidden;
+  }
+  .phone-bar {
+    padding: 12px 18px; font-size: 12px; color: var(--muted);
+    background: #0b1c30; display: flex; justify-content: space-between;
+  }
+  .phone-body { padding: 22px 20px 26px; }
+  .verdict-banner {
+    border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+    color: #fff; font-weight: 700; font-size: 15px; letter-spacing: 0.4px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .verdict-banner.approve   { background: var(--approve); }
+  .verdict-banner.challenge { background: var(--challenge); }
+  .verdict-banner.block     { background: var(--block); }
+  .customer-msg {
+    font-size: 17px; line-height: 1.55; color: var(--text);
+  }
+  .customer-meta {
+    margin-top: 18px; font-size: 12px; color: var(--muted);
+  }
+
+  /* ---------- customer view: USSD green-screen terminal ---------- */
+  .ussd-term {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 26px;
+  }
+  .term {
+    width: 100%; max-width: 420px; background: #000;
+    border-radius: 10px; border: 1px solid #123;
+    box-shadow: 0 18px 40px rgba(0,0,0,0.6);
+    font-family: "Consolas", "Courier New", monospace;
+    color: #4ade80; font-size: 14px; line-height: 1.6;
+    padding: 18px 20px; white-space: pre-wrap;
+  }
+  .term .dim { color: #166534; }
+  .term-title {
+    max-width: 420px; margin: -14px auto 12px; text-align: center;
+    color: var(--muted); font-size: 12px;
+  }
+
+  /* ---------- judge view ---------- */
+  #judgePanel { flex: 1; overflow-y: auto; }
+  .judge-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    padding: 14px 18px 4px;
+  }
+  .stat {
+    background: #10233a; border: 1px solid var(--card-border);
+    border-radius: 10px; padding: 10px 12px;
+  }
+  .stat small { display: block; color: var(--muted); font-size: 11px;
+                text-transform: uppercase; letter-spacing: 0.8px; }
+  .stat b { font-size: 17px; }
+  .signals-table {
+    width: calc(100% - 36px); margin: 12px 18px 6px;
+    border-collapse: collapse; font-size: 13px;
+  }
+  .signals-table th {
+    text-align: left; color: var(--muted); font-weight: 600;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px;
+    padding: 6px 8px; border-bottom: 1px solid var(--card-border);
+  }
+  .signals-table td {
+    padding: 7px 8px; border-bottom: 1px solid #223049;
+    color: var(--text); font-family: Consolas, monospace; font-size: 12.5px;
+  }
+  .signals-table td:last-child { text-align: right; color: var(--accent); }
+  .rt-line {
+    padding: 8px 18px 16px; color: var(--muted); font-size: 12.5px;
+  }
+  .rt-line b { color: var(--accent); font-family: Consolas, monospace; }
+  .degraded-flag {
+    margin: 0 18px 14px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(220,38,38,0.12); border: 1px solid var(--block);
+    color: #fca5a5; font-size: 12.5px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <h1>Session<span>Guard</span></h1>
+      <p>Real-time account takeover detection &mdash; built for every channel</p>
+    </div>
+    <div class="net-toggle">
+      <label class="switch">
+        <input type="checkbox" id="offlineSwitch">
+        <span class="slider"></span>
+      </label>
+      <div class="net-label" id="netLabel">
+        <span class="state">Network Status: ONLINE</span>
+        <small>flip to simulate a network/power cut</small>
+      </div>
+    </div>
+  </header>
+
+  <div class="section-title">Attack &amp; life-event scenarios &mdash; one click runs the real API</div>
+  <div class="scenarios" id="scenarioRow">
+    <div class="placeholder" style="min-height:96px">Loading scenarios&hellip;</div>
+  </div>
+
+  <div class="results">
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Customer View</h2>
+        <small>what the bank's customer actually sees</small>
+      </div>
+      <div id="customerPanel">
+        <div class="placeholder">Run a scenario to see the customer notification.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Judge View</h2>
+        <button id="judgeToggle"
+                style="background:none;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:6px 14px;font-size:13px;cursor:pointer;font-family:inherit;">
+          Show technical detail
+        </button>
+      </div>
+      <small style="padding:10px 18px 0;color:var(--muted);font-size:12px;">
+        For evaluation purposes &mdash; never shown to real customers.
+      </small>
+      <div id="judgePanel" hidden>
+        <div class="placeholder">No result yet.</div>
+      </div>
+    </section>
+  </div>
+
+</div>
+<script>
+  const CSRF_TOKEN = "{{ csrf_token }}";
+  const VERDICT_COLORS = { approve: "#059669", challenge: "#ca8a04", block: "#dc2626" };
+  let PRESETS = {};
+
+  // ---- page load: pull the five real presets --------------------------
+  async function loadScenarios() {
+    const res = await fetch("/api/demo/scenarios/");
+    PRESETS = await res.json();
+    const row = document.getElementById("scenarioRow");
+    row.innerHTML = "";
+    for (const [name, preset] of Object.entries(PRESETS)) {
+      const btn = document.createElement("button");
+      btn.className = "scenario-btn";
+      btn.id = "btn-" + name;
+      btn.innerHTML =
+        `<span class="label">${preset.scenario_label}</span>` +
+        `<span class="channel-tag ${preset.channel}">${preset.channel}</span>`;
+      btn.title = preset.scenario_description;
+      btn.addEventListener("click", () => runScenario(name, btn));
+      row.appendChild(btn);
+    }
+  }
+
+  // ---- run one scenario against the REAL scoring API ------------------
+  async function runScenario(name, btn) {
+    const preset = PRESETS[name];
+    const endpoint = preset.channel === "ussd"
+      ? "/api/ussd-event/" : "/api/session-event/";
+    btn.disabled = true;
+    try {
+      const t0 = performance.now();
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": CSRF_TOKEN,
+        },
+        body: JSON.stringify(preset.payload),
+      });
+      const rtMs = Math.round(performance.now() - t0);
+      const data = await res.json();
+      renderCustomer(preset, data);
+      renderJudge(data, rtMs);
+      document.getElementById("judgePanel").hidden = false;
+      document.getElementById("judgeToggle").textContent = "Hide technical detail";
+    } catch (err) {
+      alert("Request failed: " + err);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ---- LEFT panel: banking notification or USSD terminal ---------------
+  function renderCustomer(preset, data) {
+    const el = document.getElementById("customerPanel");
+    if (preset.channel === "ussd") {
+      el.innerHTML = `
+        <div class="ussd-term">
+          <div>
+            <div class="term-title">Simulated USSD session (GTBank-style *737#)</div>
+            <div class="term">*737*1*Amount*Nuban#
+<span class="dim">--------------------------------</span>
+Dear Customer, your transfer of NGN was processed:
+
+${data.customer_message}
+
+<span class="dim">Reply 1 to repeat. Help? Call 0700-GBCONTACT</span></div>
+          </div>
+        </div>`;
+      return;
+    }
+    const verdict = data.verdict.toUpperCase();
+    el.innerHTML = `
+      <div class="notif">
+        <div class="phone">
+          <div class="phone-bar"><span>9:41</span><span>SessionGuard Bank</span></div>
+          <div class="phone-body">
+            <div class="verdict-banner ${data.verdict}">
+              <span>${verdict === "APPROVE" ? "\u2714" : verdict === "CHALLENGE" ? "\u26A0" : "\u26D4"} Transfer ${verdict}</span>
+            </div>
+            <div class="customer-msg">${data.customer_message}</div>
+            <div class="customer-meta">Notification from SessionGuard risk engine &middot; just now</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // ---- RIGHT panel: technical detail for judges ------------------------
+  function renderJudge(data, rtMs) {
+    const signals = (data.debug_signals || [])
+      .map(s => `<tr><td>${s.code}</td><td>+${s.weight}</td></tr>`)
+      .join("");
+    document.getElementById("judgePanel").innerHTML = `
+      <div class="judge-grid">
+        <div class="stat"><small>Verdict</small><b style="color:${VERDICT_COLORS[data.verdict]}">${data.verdict}</b></div>
+        <div class="stat"><small>Score</small><b>${data.score}</b></div>
+        <div class="stat"><small>ML probability</small><b>${data.ml_probability == null ? "n/a (offline)" : data.ml_probability.toFixed(2)}</b></div>
+        <div class="stat"><small>Override applied</small><b>${data.context_override_applied ? "yes" : "no"}</b></div>
+        <div class="stat"><small>Degraded mode</small><b>${data.is_degraded ? "YES" : "no"}</b></div>
+      </div>
+      ${data.is_degraded ? `<div class="degraded-flag">DEGRADED: scored offline with cached profile only; event queued for full re-scoring on reconnect.</div>` : ""}
+      ${signals ? `<table class="signals-table">
+        <thead><tr><th>Triggered signal</th><th>Weight</th></tr></thead>
+        <tbody>${signals}</tbody></table>` : ""}
+      <div class="rt-line">Response time: <b>${rtMs}ms</b> end-to-end (brief target: under a second)</div>`;
+  }
+
+  // ---- network outage toggle -------------------------------------------
+  const switchEl = document.getElementById("offlineSwitch");
+  const netLabel = document.getElementById("netLabel");
+  switchEl.addEventListener("change", async () => {
+    const wantOffline = switchEl.checked;
+    switchEl.disabled = true;
+    try {
+      const res = await fetch("/api/demo/toggle-offline/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json",
+                   "X-CSRFToken": CSRF_TOKEN },
+        body: JSON.stringify({ offline: wantOffline }),
+      });
+      const state = await res.json();
+      switchEl.checked = state.offline;
+      netLabel.classList.toggle("offline", state.offline);
+      netLabel.querySelector(".state").textContent =
+        state.offline ? "Network Status: OFFLINE (Simulated)"
+                      : "Network Status: ONLINE";
+      netLabel.querySelector("small").textContent =
+        state.offline
+          ? "scoring degraded to local rules-only; events queue for resync"
+          : "flip to simulate a network/power cut";
+    } catch (err) {
+      switchEl.checked = !wantOffline;  // snap back on failure
+      alert("Toggle failed: " + err);
+    } finally {
+      switchEl.disabled = false;
+    }
+  });
+
+  // ---- judge panel collapse --------------------------------------------
+  document.getElementById("judgeToggle").addEventListener("click", () => {
+    const panel = document.getElementById("judgePanel");
+    const btn = document.getElementById("judgeToggle");
+    panel.hidden = !panel.hidden;
+    btn.textContent = panel.hidden ? "Show technical detail"
+                                   : "Hide technical detail";
+  });
+
+  loadScenarios();
+</script>
+</body>
+</html>

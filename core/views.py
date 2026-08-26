@@ -43,6 +43,7 @@ the real exception logged server-side.
 import logging
 
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -111,7 +112,16 @@ class SessionEventView(APIView):
     def _score_event(self, user, data):
         """Steps c-g of the pipeline; exceptions propagate to post()'s
         catch-all so clients never see stack traces."""
-        now = timezone.now()  # explicit timestamp per our auto_now_add fix
+        # Client-supplied event time (store-and-forward replays, demo
+        # presets) or server 'now' -- explicit per our auto_now_add fix.
+        # Callers that skip the DRF serializer (bank ledger endpoint)
+        # hand us a raw ISO string; parse it so the feature engine and
+        # Session.objects.create() always see a datetime.
+        now = data.get("timestamp")
+        if isinstance(now, str):
+            now = parse_datetime(now)
+        if not now:
+            now = timezone.now()
 
         # History BEFORE this session exists, exactly as the feature engine
         # would load it -- reused for both the new-device/new-sim flags and
@@ -158,7 +168,11 @@ class SessionEventView(APIView):
         features = compute_features(session, history=history)
         features.save()  # a real event now: persisted like training history
 
-        decision = score_session_hybrid(features)
+        # Unified entry point: normally identical to score_session_hybrid,
+        # but during a (real or demo-simulated) outage it degrades to the
+        # local rules-only check and spools this event for resync.
+        from core.offline_fallback import score_session_with_fallback
+        decision = score_session_with_fallback(session, features=features)
 
         explained = explain_decision(decision)
         if isinstance(explained, tuple):
@@ -173,7 +187,24 @@ class SessionEventView(APIView):
             "customer_message": customer_message,
             "internal_note": internal_note,
             "debug_signals": decision.triggered_reasons,
-            "ml_probability": round(decision.ml_probability, 2),
-            "context_override_applied": decision.context_override_applied,
+            # Hybrid-only attributes: absent on degraded decisions, where
+            # there IS no ML probability and no override concept.
+            "ml_probability": (
+                round(decision.ml_probability, 2)
+                if getattr(decision, "ml_probability", None) is not None
+                else None
+            ),
+            "context_override_applied": bool(
+                getattr(decision, "context_override_applied", False)
+            ),
+            "is_degraded": bool(getattr(decision, "is_degraded", False)),
         }
+
+
+def run_scoring_pipeline(user, data):
+    """Module-level entry to the SAME pipeline the production endpoints
+    use, so the demo bank app / USSD simulator get identical risk
+    treatment (and the offline fallback) with zero duplicated logic.
+    ``SessionEventView._score_event`` never touches ``self``."""
+    return SessionEventView._score_event(None, user, data)
 

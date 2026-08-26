@@ -17,6 +17,10 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from core.bank_views import (
+    BankAppView, bank_login, bank_send_money, bank_signup, bank_state,
+)
+from core.demo_views import ControlRoomView, demo_scenarios, toggle_offline
 from core.views import SessionEventView
 
 urlpatterns = [
@@ -26,4 +30,15 @@ urlpatterns = [
          SessionEventView.as_view(channel='app'), name='session-event'),
     path('api/ussd-event/',
          SessionEventView.as_view(channel='ussd'), name='ussd-event'),
+    # --- Demo-only routes (presentations; not for production) -----------
+    path('api/demo/scenarios/', demo_scenarios, name='demo-scenarios'),
+    path('api/demo/toggle-offline/', toggle_offline,
+         name='demo-toggle-offline'),
+    path('demo/', ControlRoomView.as_view(), name='control-room'),
+    # --- Demo customer experience (bank app + USSD simulator) -----------
+    path('bank/', BankAppView.as_view(), name='bank-app'),
+    path('api/bank/signup/', bank_signup, name='bank-signup'),
+    path('api/bank/login/', bank_login, name='bank-login'),
+    path('api/bank/state/<uuid:user_id>/', bank_state, name='bank-state'),
+    path('api/bank/send-money/', bank_send_money, name='bank-send-money'),
 ]

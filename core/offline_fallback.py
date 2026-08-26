@@ -68,13 +68,34 @@ OFFLINE_CHALLENGE_MAX = 59
 DEGRADED_VERDICT_CAP = "challenge"
 
 
+# --- DEMO-ONLY runtime toggle (Control Room UI) ----------------------------
+# One-element list so it can be mutated from other modules without `global`.
+# This is for LIVE PRESENTATIONS only -- distinct from the
+# SESSIONGUARD_FORCE_OFFLINE env var, which is the mechanism automated
+# tests use. The demo toggle is process-memory state: it vanishes on
+# restart and must never be set by production code paths.
+_DEMO_FORCED_OFFLINE = [False]
+
+
+def set_demo_offline_mode(is_offline: bool) -> bool:
+    """Flip the demo outage switch; returns the new state."""
+    _DEMO_FORCED_OFFLINE[0] = bool(is_offline)
+    return _DEMO_FORCED_OFFLINE[0]
+
+
 def is_scoring_service_available() -> bool:
     """Prototype stand-in for a real service-health probe.
 
-    Offline if SESSIONGUARD_FORCE_OFFLINE=1, or if the ML bundle cannot be
-    loaded (model missing/corrupt == can't run FULL scoring). In production
-    this would be a network health check with a tight timeout.
+    Order of checks:
+      1. Demo toggle (Control Room switch) -- presentation convenience.
+      2. SESSIONGUARD_FORCE_OFFLINE=1 env var -- automated tests.
+      3. ML bundle loadability -- model missing/corrupt == can't do FULL
+         scoring.
+    In production this would be a network health check with a tight
+    timeout instead of all three.
     """
+    if _DEMO_FORCED_OFFLINE[0]:
+        return False
     if os.environ.get("SESSIONGUARD_FORCE_OFFLINE") == "1":
         return False
     try:
@@ -86,18 +107,27 @@ def is_scoring_service_available() -> bool:
         return False
 
 
-def build_local_cache(user) -> dict:
+def build_local_cache(user, exclude_session_id=None) -> dict:
     """Minimal per-user snapshot a device/branch caches WHILE ONLINE.
 
     Refreshed periodically in normal operation -- deliberately tiny (last
     known hardware identity + habits), not a history dump.
+
+    ``exclude_session_id``: when scoring an event whose row is ALREADY
+    persisted (the live-API flow saves before scoring), that row must not
+    become its own 'last known' baseline -- otherwise an attacker's fresh
+    SIM would instantly look like the customer's usual SIM and the
+    mismatch check would silently die.
     """
-    latest_with_device = (
-        Session.objects.filter(user=user, device_fingerprint__isnull=False)
-        .order_by("-timestamp")
-        .first()
-    )
-    latest_any = Session.objects.filter(user=user).order_by("-timestamp").first()
+    latest = Session.objects.filter(user=user,
+                                    device_fingerprint__isnull=False)
+    any_latest = Session.objects.filter(user=user)
+    if exclude_session_id:
+        latest = latest.exclude(pk=exclude_session_id)
+        any_latest = any_latest.exclude(pk=exclude_session_id)
+
+    latest_with_device = latest.order_by("-timestamp").first()
+    latest_any = any_latest.order_by("-timestamp").first()
 
     return {
         "user_id": str(user.user_id),
@@ -348,7 +378,9 @@ def score_session_with_fallback(session, features=None):
         return score_session_hybrid(features)
 
     user = BankUser.objects.get(user_id=event["user_id"])
-    cached_profile = build_local_cache(user)
+    cached_profile = build_local_cache(
+        user, exclude_session_id=event.get("session_id")
+    )
     decision = score_session_offline(event, cached_profile)
     queue_for_resync(event, decision)
     return decision

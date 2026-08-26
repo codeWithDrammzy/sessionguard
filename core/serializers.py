@@ -20,6 +20,8 @@ generic 400 validation shape.
 
 from rest_framework import serializers
 
+from django.utils import timezone
+
 
 class TransactionEventSerializer(serializers.Serializer):
     """Optional nested transfer payload."""
@@ -76,11 +78,27 @@ class SessionEventSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Optional transfer attached to this session.",
     )
+    # Optional client-supplied event time: store-and-forward devices (and
+    # the demo presets) replay events that happened earlier -- scoring must
+    # use THEIR clock, not arrival time. Future stamps are dropped with a
+    # warning rather than trusted.
+    timestamp = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        help_text="Optional ISO event time; defaults to server 'now'.",
+    )
 
     def validate(self, attrs):
         warnings = []
         channel = attrs["channel"]
         fingerprint = attrs.get("device_fingerprint")
+
+        ts = attrs.get("timestamp")
+        if ts and ts > timezone.now():
+            warnings.append(
+                "timestamp in the future ignored; server time used instead."
+            )
+            attrs["timestamp"] = None
 
         if channel == "ussd":
             # Schema convention: USSD exposes no device identity. Drop it

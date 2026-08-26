@@ -86,13 +86,12 @@ def main():
     client = Client(HTTP_HOST="localhost")  # dev ALLOWED_HOSTS covers this
     hour = timezone.now().hour
 
-    # ---- Scenario 1: pick an app-prefacing user awake at this hour ----
-    candidate = None
-    for u in BankUser.objects.filter(channel_preference="app"):
-        if any(s <= hour < e for s, e in u.typical_login_hours):
-            candidate = u
-            break
-    assert candidate is not None, "No user whose login window covers now."
+    # ---- Scenario 1: identity-stable app user (awake preferred; the
+    # _stable_users helper tolerates gap hours where nobody is in-window).
+    from core.demo_scenarios import _stable_users
+    app_pool = _stable_users("app", 2)
+    assert app_pool, "No usable app user in DB."
+    candidate = app_pool[0]
 
     # Anchor on a BASELINE session (exclude anything stamped today so a
     # crashed earlier run can never poison the 'normal' reference values).
@@ -165,14 +164,9 @@ def main():
     show("TEST 4  HTTP 404 expected  (well-formed UUID, no such BankUser)",
          r4, t0)
 
-    # ---- Bonus: USSD endpoint sanity ----
-    ussd_user = None
-    for u in BankUser.objects.filter(channel_preference="ussd"):
-        if any(s <= hour < e for s, e in u.typical_login_hours):
-            ussd_user = u
-            break
-    if ussd_user is None:
-        ussd_user = candidate
+    # ---- Bonus: USSD endpoint sanity (distinct stable user if possible)
+    ussd_pool = _stable_users("ussd", 1)
+    ussd_user = ussd_pool[0] if ussd_pool else candidate
     ua = (Session.objects.filter(user=ussd_user, channel="ussd",
                                  timestamp__lt=start_of_today)
           .order_by("-timestamp").first())

@@ -1,0 +1,491 @@
+{% comment %}
+DEMO ONLY -- SessionGuard customer experience: mobile banking app (left)
+and a feature-phone USSD simulator (right), both hitting the REAL risk
+engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
+{% endcomment %}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SessionGuard Bank &mdash; Customer Experience</title>
+<style>
+  :root {
+    --bg: #0d1b2a; --card: #1b263b; --border: #24344d;
+    --accent: #6fffe9; --text: #fff; --muted: #cbd5e1;
+    --approve: #059669; --challenge: #ca8a04; --block: #dc2626;
+    --term-green: #4ade80;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    padding: 28px 32px 40px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 26px; }
+  header h1 { font-size: 26px; }
+  header h1 span { color: var(--accent); }
+  header p { color: var(--muted); font-size: 14px; margin-top: 6px; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+  .device {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 20px; padding: 22px; display: flex;
+    flex-direction: column; align-items: center; gap: 16px;
+  }
+  .device h2 { font-size: 13px; letter-spacing: 1.6px; text-transform:
+               uppercase; color: var(--muted); }
+
+  /* ---------- shared phone chrome ---------- */
+  .phone {
+    width: 320px; border-radius: 26px; background: #10233a;
+    border: 1px solid #2c3e57; box-shadow: 0 18px 40px rgba(0,0,0,.45);
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .screen { padding: 18px; min-height: 470px; display: flex;
+            flex-direction: column; gap: 12px; }
+  .statusbar { display: flex; justify-content: space-between;
+               font-size: 11px; color: var(--muted); padding: 0 2px; }
+
+  .btn {
+    border: none; border-radius: 10px; padding: 11px 14px;
+    font-weight: 600; font-size: 14px; cursor: pointer;
+    background: var(--accent); color: #06283d; font-family: inherit;
+    width: 100%;
+  }
+  .btn.secondary { background: transparent; color: var(--accent);
+                   border: 1px solid var(--accent); }
+  .btn.danger { background: var(--block); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: wait; }
+  input.field {
+    width: 100%; background: #0b1c30; border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text); padding: 11px 12px;
+    font-size: 14px; font-family: inherit;
+  }
+  input.field:focus { outline: none; border-color: var(--accent); }
+  label.lbl { font-size: 12px; color: var(--muted); }
+
+  .banner { border-radius: 10px; padding: 11px 13px; color: #fff;
+            font-weight: 700; font-size: 13px; text-align: center; }
+  .banner.approve { background: var(--approve); }
+  .banner.challenge { background: var(--challenge); }
+  .banner.block { background: var(--block); }
+  .msg { font-size: 13.5px; line-height: 1.5; color: var(--text); }
+
+  /* ---------- dashboard ---------- */
+  .balance-card { background: linear-gradient(135deg,#123a5c,#0e2c49);
+                  border-radius: 14px; padding: 16px; }
+  .balance-card small { color: var(--muted); font-size: 11px;
+                        letter-spacing: 1px; text-transform: uppercase; }
+  .balance-card .amt { font-size: 27px; font-weight: 800; margin-top: 4px;
+                       letter-spacing: .5px; }
+  .activity { display: flex; flex-direction: column; gap: 8px;
+              overflow-y: auto; max-height: 180px; }
+  .act { display: flex; justify-content: space-between; align-items:center;
+         background: #0b1c30; border: 1px solid var(--border);
+         border-radius: 10px; padding: 9px 11px; font-size: 12.5px; }
+  .act .who { color: var(--text); font-weight: 600; }
+  .act .meta { color: var(--muted); font-size: 11px; }
+  .chip { font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+          font-weight: 700; }
+  .chip.approve { background: rgba(5,150,105,.18); color: #6ee7b7; }
+  .chip.challenge { background: rgba(202,138,4,.18); color: #fcd34d; }
+  .chip.block { background: rgba(220,38,38,.18); color: #fca5a5; }
+
+  footer { text-align: center; margin-top: 30px; color: var(--muted);
+           font-size: 13px; }
+  footer a { color: var(--accent); text-decoration: none;
+             border-bottom: 1px dotted var(--accent); }
+
+  /* ---------- USSD feature phone ---------- */
+  .feature-phone { width: 300px; border-radius: 30px; background: #17273d;
+                   border: 1px solid #2c3e57; padding: 18px 16px 22px;
+                   box-shadow: 0 18px 40px rgba(0,0,0,.5); }
+  .ussd-screen {
+    background: #000; border-radius: 8px; min-height: 250px;
+    max-height: 250px; overflow-y: auto; padding: 12px 12px;
+    font-family: "Consolas","Courier New",monospace; color: var(--term-green);
+    font-size: 13px; line-height: 1.55; white-space: pre-wrap;
+  }
+  .ussd-input-row { display: flex; gap: 8px; margin-top: 12px; }
+  .ussd-screen::-webkit-scrollbar { width: 6px; }
+  .ussd-screen::-webkit-scrollbar-thumb { background: #14532d;
+                                          border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Session<span>Guard</span> Bank</h1>
+    <p>The customer experience on both Nigerian channels &mdash; every action scored by the real engine</p>
+  </header>
+
+  <div class="cols">
+
+    <!-- ================= LEFT: smartphone app ================= -->
+    <section class="device">
+      <h2>Mobile app channel</h2>
+      <div class="phone" id="appPhone">
+        <div class="statusbar"><span id="appClock">9:41</span><span>SessionGuard Bank</span></div>
+        <div class="screen" id="appScreen"></div>
+      </div>
+    </section>
+
+    <!-- ============ RIGHT: USSD feature phone ============= -->
+    <section class="device">
+      <h2>USSD channel (*737#)</h2>
+      <div class="feature-phone">
+        <div class="ussd-screen" id="ussdScreen">Dial *737# to begin.
+
+_</div>
+        <div class="ussd-input-row">
+          <input class="field" id="ussdInput" inputmode="numeric"
+                 placeholder="type here..." autocomplete="off">
+          <button class="btn" style="width:auto;padding:11px 18px;"
+                  id="ussdSend">Send</button>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <footer>
+    Demo build &middot; all transfers scored in real time by SessionGuard
+    &nbsp;&bull;&nbsp;
+    <a href="/demo/">Analyst View</a>
+  </footer>
+</div>
+
+<script>
+  const CSRF_TOKEN = "{{ csrf_token }}";
+  // ---------------- tiny helpers ----------------
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem(k)); }
+             catch (e) { return null; } },
+    set(k, v) { localStorage.setItem(k, JSON.stringify(v)); },
+  };
+  const randHex = n => Array.from(crypto.getRandomValues(
+      new Uint8Array(n / 2))).map(b => b.toString(16).padStart(2, "0")).join("");
+  const naira = s => "NGN " + Number(s).toLocaleString("en-NG",
+                                                     {minimumFractionDigits: 2});
+
+  let USER = store.get("sg_user");
+  let APPDEV = store.get("sg_app_device");
+  let USSD = store.get("sg_ussd_device");
+
+  function ensureDevices() {
+    // App and USSD keep SEPARATE apparent identities in localStorage:
+    // a real customer's browser and their SIM look like different
+    // 'devices' to the bank. The SIM id is deliberately SHARED -- it is
+    // the same physical SIM across both channels.
+    if (!APPDEV) {
+      APPDEV = {
+        device_fingerprint: randHex(64),
+        sim_id: "SIM-" + randHex(30),
+        ip_or_cell_tower_id: "TWR-" + randHex(8),
+        location_geohash: "s1tst0",
+        created: Date.now(),
+      };
+      store.set("sg_app_device", APPDEV);
+    }
+    if (!USER && APPDEV.created && Date.now() - APPDEV.created > 1000 * 60 * 60 * 24) {
+      // stale anonymous device from an abandoned signup: harmless, keep
+    }
+    if (!USSD) {
+      USSD = {
+        ip_or_cell_tower_id: "TWR-USSD-" + randHex(8),
+        // Same neighbourhood as the app identity: one physical SIM
+        // registers on nearby cells. A fresh random geohash here would
+        // brand every first USSD session as a location change.
+        location_geohash: APPDEV.location_geohash,
+      };
+      store.set("sg_ussd_device", USSD);
+    }
+  }
+
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": CSRF_TOKEN},
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  }
+
+  // ================= LEFT PHONE: mobile app =================
+  const appScreen = document.getElementById("appScreen");
+
+  function renderAuth(prefillError) {
+    appScreen.innerHTML = `
+      ${prefillError ? `<div class="banner block">${prefillError}</div>` : ""}
+      <label class="lbl">New here? Create your account</label>
+      <input class="field" id="suName" placeholder="First name">
+      <input class="field" id="suPhone" placeholder="Phone number" inputmode="tel">
+      <button class="btn" id="suBtn">Open account &middot; NGN 500,000</button>
+      <hr style="border-color:var(--border);width:100%">
+      <label class="lbl">Already banking with us?</label>
+      <input class="field" id="liPhone" placeholder="Phone number" inputmode="tel">
+      <button class="btn secondary" id="liBtn">Log in</button>`;
+    document.getElementById("suBtn").onclick = async () => {
+      const r = await api("/api/bank/signup/", {
+        first_name: suName.value.trim(), phone_number: suPhone.value.trim(),
+      });
+      r.error ? renderAuth(r.error) : completeAuth(r);
+    };
+    document.getElementById("liBtn").onclick = async () => {
+      const r = await api("/api/bank/login/",
+                          {phone_number: liPhone.value.trim()});
+      r.error ? renderAuth(r.error) : completeAuth(r);
+    };
+  }
+
+  function completeAuth(r) {
+    USER = {user_id: r.user_id, first_name: r.first_name};
+    store.set("sg_user", USER);
+    renderDashboard();
+  }
+
+  async function refreshState() {
+    const r = await fetch(`/api/bank/state/${USER.user_id}/`);
+    return r.json();
+  }
+
+  function renderDashboard(state) {
+    appScreen.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <b>Hi, ${USER.first_name}</b>
+        <button class="btn danger" style="width:auto;padding:6px 10px;font-size:11px" id="swBtn">Switch Device</button>
+      </div>
+      <div class="balance-card">
+        <small>Ledger balance</small>
+        <div class="amt" id="balAmt">${naira(state.balance)}</div>
+      </div>
+      <div id="appAlert"></div>
+      <label class="lbl">Send money</label>
+      <input class="field" id="amtIn" placeholder="Amount (NGN)" inputmode="decimal">
+      <input class="field" id="rcpIn" placeholder="Recipient account / ID">
+      <button class="btn" id="sendBtn">Send transfer</button>
+      <label class="lbl">Recent activity</label>
+      <div class="activity" id="actList"></div>`;
+    actList.innerHTML = (state.recent || []).map(a => `
+      <div class="act">
+        <div><div class="who">${a.recipient}</div>
+             <div class="meta">${a.time} &middot; ${a.channel.toUpperCase()} &middot; ${a.reference}</div></div>
+        <div style="text-align:right">
+          <div>${naira(a.amount)}</div>
+          <span class="chip ${a.outcome}">${a.outcome}</span></div>
+      </div>`).join("") ||
+      `<div class="meta" style="color:var(--muted);font-size:12px">No transfers yet.</div>`;
+
+    sendBtn.onclick = () => submitTransfer({
+      amount: amtIn.value.trim(), recipient_id: rcpIn.value.trim(),
+    });
+    swBtn.onclick = () => {
+      // Simulate the customer opening the app on a DIFFERENT phone:
+      // fingerprint changes, everything else stays.
+      APPDEV.device_fingerprint = randHex(64);
+      store.set("sg_app_device", APPDEV);
+      appAlert.innerHTML =
+        `<div class="banner challenge">New device will be used on your next action.</div>`;
+    };
+  }
+
+  async function submitTransfer(txn, extra = {}) {
+    sendBtn && (sendBtn.disabled = true);
+    try {
+      const r = await api("/api/bank/send-money/", {
+        user_id: USER.user_id,
+        channel: "app",
+        ...APPDEV,
+        transaction: txn || undefined,
+        ...extra,
+      });
+      handleBankResponse(r, txn);
+    } finally { sendBtn && (sendBtn.disabled = false); }
+  }
+
+  function handleBankResponse(r, txn) {
+    const alertBox = document.getElementById("appAlert");
+    if (!alertBox) return;
+    if (r.verdict === "approve") {
+      alertBox.innerHTML = `
+        <div class="banner approve">Approved${r.released_hold ? " &mdash; verification successful" : ""}</div>
+        <p class="msg">${r.customer_message}${r.reference ? ` Ref: <b>${r.reference}</b>` : ""}</p>`;
+    } else if (r.verdict === "challenge") {
+      alertBox.innerHTML = `
+        <div class="banner challenge">Verification needed</div>
+        <p class="msg">${r.customer_message}</p>
+        <input class="field" id="otpIn" placeholder="Enter code sent to your phone" inputmode="numeric" style="margin-top:8px">
+        <button class="btn secondary" id="otpBtn" style="margin-top:8px">Verify &amp; release</button>`;
+      document.getElementById("otpBtn").onclick = () =>
+        submitTransfer(txn, {challenge_reference: r.reference});
+    } else if (r.verdict === "expired") {
+      alertBox.innerHTML = `<div class="banner challenge">Verification expired</div><p class="msg">${r.customer_message}</p>`;
+    } else {
+      alertBox.innerHTML = `
+        <div class="banner block">Blocked</div>
+        <p class="msg">${r.customer_message}</p>`;
+    }
+    refreshState().then(renderDashboard);
+  }
+  // ============ RIGHT PHONE: USSD *737# state machine ============
+  const ussdScreen = document.getElementById("ussdScreen");
+  const ussdInput = document.getElementById("ussdInput");
+  let uState = "idle";       // idle|menu|sm_amount|sm_recipient|sm_pin|
+                             // sm_confirm|otp
+  let uCtx = {};             // per-session scratch (amount, recipient, ref)
+
+  function term(text) { ussdScreen.textContent = text; }
+
+  function menuText() {
+    return `Welcome to SessionGuard Bank
+
+1. Send Money
+2. Check Balance
+0. Exit`;
+  }
+
+  ussdSend.onclick = ussdStep;
+  ussdInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") ussdStep();
+  });
+
+  async function ussdStep() {
+    const v = ussdInput.value.trim();
+    ussdInput.value = "";
+
+    if (uState === "idle") {
+      if (v.replace(/\s/g, "") === "*737#") {
+        ensureDevices();
+        uState = "menu"; uCtx = {};
+        term(menuText());
+      } else if (USER) {
+        term(`Invalid code. Dial *737# to begin.\n\n(You are logged in as ${USER.first_name} on the app; your SIM identity is shared.)`);
+      } else {
+        term(`Invalid code. Dial *737# to begin.`);
+      }
+      return;
+    }
+    if (!USER) { term(`No account found on this SIM. Create one in the app first, then dial *737#.`); return; }
+
+    switch (uState) {
+      case "menu":
+        if (v === "1") { uState = "sm_amount"; term(`Send Money\nEnter amount:`); }
+        else if (v === "2") await ussdBalance();
+        else if (v === "0") ussdExit();
+        else term(`Invalid option.\n\n` + menuText());
+        break;
+
+      case "sm_amount": {
+        const amt = Number(v);
+        if (!amt || amt <= 0) { term(`Amount must be a positive number.\n\nEnter amount:`); break; }
+        uCtx.amount = v;
+        uState = "sm_recipient";
+        term(`Send Money\nEnter recipient account number:`);
+        break;
+      }
+      case "sm_recipient": {
+        // Numeric-first like real USSD: digits only, mapped to a
+        // beneficiary id server-side shape BNF-<digits>.
+        if (!/^\d{3,12}$/.test(v)) { term(`Recipient must be 3-12 digits (an account number), not free text.\n\nEnter recipient account number:`); break; }
+        uCtx.recipient = "BNF-" + v;
+        uState = "sm_pin";
+        term(`Send Money NGN ${Number(uCtx.amount).toLocaleString()}\nto ${uCtx.recipient}\n\nEnter your 4-digit PIN:`);
+        break;
+      }
+      case "sm_pin": {
+        if (!/^\d{4}$/.test(v)) { term(`PIN must be exactly 4 digits.\n\nEnter your 4-digit PIN:`); break; }
+        uCtx.pin = v;   // demo: accepted but NOT sent anywhere
+        uState = "sm_confirm";
+        term(`Confirm transfer:\nNGN ${Number(uCtx.amount).toLocaleString()} to ${uCtx.recipient}\n\n1. Confirm\n2. Cancel`);
+        break;
+      }
+      case "sm_confirm":
+        if (v === "1") await submitUssdTransfer({});
+        else if (v === "2") ussdExit();
+        else term(`Invalid option.\n\n1. Confirm\n2. Cancel`);
+        break;
+
+      case "otp": {
+        if (!/^\d{4,6}$/.test(v)) { term(`The code is 4-6 digits. Try again:`); break; }
+        // Any code verifies in this demo -- but the RELEASE goes through
+        // the same real pipeline endpoint with the hold reference.
+        uCtx.releasing = true;
+        const r = await api("/api/bank/send-money/", ussdPayload({challenge_reference: uCtx.ref}));
+        showUssdVerdict(r);
+        uState = r.verdict === "approve" ? "done" : "otp";
+        break;
+      }
+      case "done":
+      default:
+        uState = "menu"; uCtx = {};
+        term(menuText());
+    }
+  }
+
+  function ussdPayload(extra) {
+    return {
+      user_id: USER.user_id,
+      channel: "ussd",
+      device_fingerprint: null,          // USSD has no app device concept
+      sim_id: APPDEV.sim_id,             // same physical SIM as the app
+      ip_or_cell_tower_id: USSD.ip_or_cell_tower_id,
+      location_geohash: USSD.location_geohash,
+      ...extra,
+    };
+  }
+
+  async function submitUssdTransfer() {
+    term("Processing...");
+    const r = await api("/api/bank/send-money/", ussdPayload({
+      transaction: {amount: uCtx.amount, recipient_id: uCtx.recipient},
+    }));
+    if (r.verdict === "challenge" && r.hold) {
+      uCtx.ref = r.reference;
+      uState = "otp";
+      term(`${r.customer_message}\n\nEnter code sent to your phone:`);
+      return;
+    }
+    showUssdVerdict(r);
+    uState = r.verdict === "approve" ? "done" : "menu";
+  }
+
+  function showUssdVerdict(r) {
+    if (r.verdict === "approve") {
+      term(`SUCCESS\n${r.customer_message}\nRef: ${r.reference || "-"}\nNew balance: ${naira(r.balance)}\n\nPress any key to continue.`);
+    } else if (r.verdict === "block") {
+      term(`!! TRANSFER DECLINED !!\n\n${r.customer_message}\n\nPress any key to continue.`);
+    } else {
+      term(`${r.customer_message}\n\nPress any key to continue.`);
+    }
+  }
+
+  async function ussdBalance() {
+    term("Checking balance...");
+    const r = await api("/api/bank/send-money/", ussdPayload({}));
+    if (r.verdict === "approve") {
+      term(`Your balance is ${naira(r.balance)}.\n\n0. Exit`);
+    } else {
+      // Challenged/blocked login: the customer_message REPLACES the
+      // balance -- never leak account data through friction.
+      term(`${r.customer_message}\n\nBalance unavailable right now.\n\n0. Exit`);
+    }
+  }
+
+  function ussdExit() {
+    uState = "idle"; uCtx = {};
+    // Identity deliberately persists in localStorage across exits --
+    // like a real SIM, which keeps its identity between sessions.
+    term(`Thank you for banking with SessionGuard.\n\nDial *737# to begin again.`);
+  }
+
+  // ---------------- boot ----------------
+  ensureDevices();
+  if (USER) refreshState().then(renderDashboard);
+  else renderAuth();
+</script>
+</body>
+</html>
