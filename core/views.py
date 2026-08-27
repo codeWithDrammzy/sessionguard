@@ -159,6 +159,7 @@ class SessionEventView(APIView):
                 session=session,
                 amount=txn_payload["amount"],
                 recipient_id=txn_payload["recipient_id"],
+                narration=txn_payload.get("narration", ""),
                 is_new_recipient=(
                     txn_payload["recipient_id"]
                     not in user.typical_recipients

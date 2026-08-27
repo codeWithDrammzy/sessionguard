@@ -211,6 +211,7 @@ def bank_send_money(request):
         data["transaction"] = {
             "amount": str(txn_payload["amount"]),
             "recipient_id": txn_payload["recipient_id"],
+            "narration": txn_payload.get("narration", ""),
         }
 
     result = run_scoring_pipeline(user, data)

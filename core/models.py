@@ -323,6 +323,15 @@ class Transaction(models.Model):
         help_text="Identifier of the transfer beneficiary.",
     )
 
+    # Optional free-text description attached to the transfer (e.g.
+    # "School fees", "August rent"). Standard in Nigerian banking apps.
+    narration = models.CharField(
+        max_length=140,
+        blank=True,
+        default="",
+        help_text="Optional transfer description shown on receipts.",
+    )
+
     # True when recipient_id is not in the user's typical_recipients list.
     # New recipients are one of the strongest single ATO indicators.
     is_new_recipient = models.BooleanField(

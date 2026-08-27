@@ -10,15 +10,59 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
 <title>SessionGuard Bank &mdash; Customer Experience</title>
 <style>
   :root {
-    --bg: #0a1120; --card: #131d30; --border: #1e2d47;
-    --accent: #6fffe9; --accent-dim: rgba(111,255,233,.12);
-    --text: #e8edf4; --muted: #7f8da4;
+    --bg: #131f30; --card: #1c2942; --border: #2a3a57;
+    --accent: #5ef5e0; --accent-dim: rgba(94,245,224,.12);
+    --text: #eaf0f8; --muted: #a4b3ca;
     --approve: #10b981; --challenge: #f59e0b; --block: #ef4444;
     --term-green: #4ade80;
-    --shadow-sm: 0 1px 3px rgba(0,0,0,.35);
-    --shadow-md: 0 4px 12px rgba(0,0,0,.4);
-    --shadow-lg: 0 8px 24px rgba(0,0,0,.45);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.3);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.35);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,.4);
   }
+  body.light-theme {
+    --bg: #f3f4f8; --card: #ffffff; --border: #d4dae4;
+    --accent: #0891b2; --accent-dim: rgba(8,145,178,.08);
+    --text: #111827; --muted: #5b6678;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.1);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,.12);
+  }
+  body.light-theme .phone {
+    background: linear-gradient(165deg, #f8fafb 0%, #eef1f5 40%, #e8ecf1 100%);
+    border: 1px solid #d0d8e4;
+    box-shadow: 0 20px 50px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.9);
+  }
+  body.light-theme .phone .screen { color: var(--text); }
+  body.light-theme input.field {
+    background: rgba(0,0,0,.03); border-color: #c5cdd8;
+  }
+  body.light-theme input.field:focus { border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(8,145,178,.1); }
+  body.light-theme .pin-key { background: #eef0f4; border-color: #d4dae4; }
+  body.light-theme .pin-key:hover { background: #e2e6ec; }
+  body.light-theme .pin-key:active { background: #d6dce5; }
+  body.light-theme .act { background: rgba(0,0,0,.02); border-color: #e0e5ed; }
+  body.light-theme .act:hover { background: rgba(0,0,0,.04); }
+  body.light-theme .banner { color: #fff; }
+  body.light-theme .receipt { background: #f7f8fb; border-color: #e0e5ed; }
+  body.light-theme .btn.muted { background: #eef0f4; color: var(--muted); border-color: #d4dae4; }
+  body.light-theme .btn.muted:hover { background: #e2e6ec; color: var(--text); }
+  body.light-theme .btn { color: #0a1825; }
+  body.light-theme .balance-card {
+    background: linear-gradient(135deg,#e8f4f8 0%,#daedf5 50%,#cfe8f0 100%);
+    border: 1px solid rgba(0,0,0,.06);
+  }
+  body.light-theme .balance-card small { color: var(--muted); }
+  body.light-theme .device { box-shadow: var(--shadow-md); }
+  body.light-theme .feature-phone { background: #e8ecf1; border-color: #c5cdd8; }
+  body.light-theme .honesty-note { background: var(--accent-dim); color: var(--muted); }
+  body.light-theme .logo-mark { color: #fff; }
+  body.light-theme .inline-err { color: #b91c1c; }
+  body.light-theme .chip.approve { background: rgba(16,185,129,.12); color: #047857; }
+  body.light-theme .chip.challenge { background: rgba(245,158,11,.12); color: #92400e; }
+  body.light-theme .chip.block { background: rgba(239,68,68,.12); color: #b91c1c; }
+  body.light-theme footer { color: var(--muted); }
+
   .device-b {
     --accent: #f59e0b; --accent-dim: rgba(245,158,11,.12);
   }
@@ -30,11 +74,23 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
     padding: 28px 32px 40px; -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 1120px; margin: 0 auto; }
-  header { text-align: center; margin-bottom: 28px; }
-  header h1 { font-size: 24px; font-weight: 700; letter-spacing: -.3px; }
+  header { text-align: center; margin-bottom: 28px; position: relative; }
+  header h1 { font-size: 24px; font-weight: 700; letter-spacing: -.3px;
+              display: inline-flex; align-items: center; gap: 10px; }
   header h1 span { color: var(--accent); }
   header p { color: var(--muted); font-size: 13px; margin-top: 5px;
              letter-spacing: .2px; }
+
+  .theme-toggle {
+    position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; width: 36px; height: 36px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: 18px; color: var(--text);
+    transition: background .15s, border-color .15s;
+    box-shadow: var(--shadow-sm);
+  }
+  .theme-toggle:hover { background: var(--accent-dim); border-color: var(--accent); }
 
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
   @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
@@ -45,19 +101,19 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
     flex-direction: column; align-items: center; gap: 14px;
     box-shadow: var(--shadow-md);
   }
-  .device h2 { font-size: 11px; letter-spacing: 2px; text-transform:
+  .device h2 { font-size: 12px; letter-spacing: 2px; text-transform:
                uppercase; color: var(--muted); font-weight: 600; }
 
   .phone {
-    width: 320px; border-radius: 28px;
-    background: linear-gradient(165deg, #152238 0%, #0d1a2e 40%, #0a1424 100%);
-    border: 1px solid rgba(255,255,255,.06);
-    box-shadow: 0 20px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.04);
+    width: 380px; height: 540px; border-radius: 28px;
+    background: linear-gradient(165deg, #1a2d48 0%, #112240 40%, #0d1a32 100%);
+    border: 1px solid rgba(255,255,255,.08);
+    box-shadow: 0 20px 50px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.05);
     overflow: hidden; display: flex; flex-direction: column;
   }
-  .device-b .phone { border-color: rgba(245,158,11,.2); }
+  .device-b .phone { border-color: rgba(245,158,11,.25); }
   .screen {
-    padding: 16px 18px; min-height: 480px; display: flex;
+    padding: 16px 18px; flex: 1; min-height: 0; display: flex;
     flex-direction: column; gap: 10px;
     animation: fadeIn .3s ease-out;
   }
@@ -67,7 +123,7 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   }
   .statusbar {
     display: flex; justify-content: space-between; align-items: center;
-    font-size: 11px; color: var(--muted); padding: 0 2px;
+    font-size: 12px; color: var(--muted); padding: 0 2px;
     margin-bottom: 2px; letter-spacing: .3px;
   }
   .statusbar .sb-left { display: flex; align-items: center; gap: 5px; }
@@ -80,9 +136,9 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   }
 
   .device-label {
-    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
     text-transform: uppercase; text-align: center; padding: 4px 12px;
-    border-radius: 8px; background: var(--accent-dim); color: var(--accent);
+    border-radius: 10px; background: var(--accent-dim); color: var(--accent);
     display: none;
   }
   .device-b .device-label { display: block; }
@@ -97,24 +153,24 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   .btn:hover { filter: brightness(1.08); }
   .btn:active { transform: scale(.98); filter: brightness(.95); }
   .btn.secondary { background: transparent; color: var(--accent);
-                   border: 1px solid rgba(111,255,233,.3); box-shadow: none; }
+                   border: 1px solid var(--accent); box-shadow: none; }
   .btn.secondary:hover { background: var(--accent-dim); }
-  .btn.muted { background: #1a2744; color: var(--muted);
+  .btn.muted { background: #1e3050; color: var(--muted);
                border: 1px solid var(--border); box-shadow: none; }
-  .btn.muted:hover { background: #213050; color: var(--text); }
+  .btn.muted:hover { background: #283c5a; color: var(--text); }
   .btn.danger { background: var(--block); color: #fff; }
   .btn:disabled { opacity: .5; cursor: wait; }
   input.field {
-    width: 100%; background: rgba(255,255,255,.04);
+    width: 100%; background: rgba(255,255,255,.06);
     border: 1px solid var(--border);
-    border-radius: 10px; color: var(--text); padding: 12px 13px;
-    font-size: 14px; font-family: inherit;
+    border-radius: 12px; color: var(--text); padding: 14px 16px;
+    font-size: 15px; font-family: inherit;
     transition: border-color .15s, box-shadow .15s;
   }
-  input.field::placeholder { color: rgba(255,255,255,.2); }
+  input.field::placeholder { color: rgba(255,255,255,.4); }
   input.field:focus { outline: none; border-color: var(--accent);
-                      box-shadow: 0 0 0 3px rgba(111,255,253,.08); }
-  label.lbl { font-size: 11px; color: var(--muted); letter-spacing: .4px;
+                      box-shadow: 0 0 0 3px rgba(94,245,224,.1); }
+  label.lbl { font-size: 12px; color: var(--muted); letter-spacing: .4px;
              font-weight: 500; text-transform: uppercase; }
 
   .banner { border-radius: 10px; padding: 11px 13px; color: #fff;
@@ -124,34 +180,34 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   .banner.challenge { background: var(--challenge); }
   .banner.block { background: var(--block); }
   .msg { font-size: 13.5px; line-height: 1.55; color: var(--text); }
-  .inline-err { color: #fca5a5; font-size: 11px; margin-top: 3px;
+  .inline-err { color: #fca5a5; font-size: 12px; margin-top: 3px;
                 font-weight: 500; }
   .acct-name { color: var(--accent); font-size: 13px; font-weight: 600;
                margin-top: 2px; min-height: 18px; }
 
   /* ---------- PIN pad ---------- */
-  .pin-dots { display: flex; gap: 14px; justify-content: center; margin: 14px 0; }
+  .pin-dots { display: flex; gap: 20px; justify-content: center; margin: 18px 0; }
   .pin-dot {
-    width: 13px; height: 13px; border-radius: 50%;
+    width: 20px; height: 20px; border-radius: 50%;
     border: 2px solid var(--border); background: transparent;
     transition: background .15s, border-color .15s, transform .1s;
   }
   .pin-dot.filled { background: var(--accent); border-color: var(--accent);
                     transform: scale(1.1); }
   .pin-grid {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-    max-width: 240px; margin: 0 auto;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+    max-width: 320px; margin: 0 auto; justify-items: center;
   }
   .pin-key {
-    height: 50px; border-radius: 12px; border: 1px solid var(--border);
-    background: rgba(255,255,255,.03); color: var(--text); font-size: 20px;
-    font-weight: 600; cursor: pointer; display: flex;
+    width: 72px; height: 72px; border-radius: 18px; border: 1px solid var(--border);
+    background: rgba(255,255,255,.05); color: var(--text); font-size: 26px;
+    font-weight: 600; cursor: pointer; display: flex; box-sizing: border-box;
     align-items: center; justify-content: center;
     transition: background .12s, transform .1s;
   }
-  .pin-key:hover { background: rgba(255,255,255,.06); }
-  .pin-key:active { background: rgba(255,255,255,.09); transform: scale(.95); }
-  .pin-key.del { background: transparent; border: none; font-size: 18px;
+  .pin-key:hover { background: rgba(255,255,255,.08); }
+  .pin-key:active { background: rgba(255,255,255,.11); transform: scale(.95); }
+  .pin-key.del { background: transparent; border: none; font-size: 20px;
                  color: var(--muted); }
 
   /* ---------- dashboard ---------- */
@@ -162,10 +218,10 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   .balance-card {
     background: linear-gradient(135deg,#163a5f 0%,#0f2b47 50%,#0c2038 100%);
     border-radius: 14px; padding: 18px 16px;
-    box-shadow: 0 6px 20px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);
-    border: 1px solid rgba(255,255,255,.05);
+    box-shadow: 0 6px 20px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.05);
+    border: 1px solid rgba(255,255,255,.06);
   }
-  .balance-card small { color: var(--muted); font-size: 10px;
+  .balance-card small { color: var(--muted); font-size: 11px;
                         letter-spacing: 1.5px; text-transform: uppercase;
                         font-weight: 600; }
   .balance-card .amt { font-size: 30px; font-weight: 800; margin-top: 6px;
@@ -174,32 +230,32 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
               overflow-y: auto; max-height: 160px; }
   .act {
     display: flex; justify-content: space-between; align-items: center;
-    background: rgba(255,255,255,.03); border: 1px solid var(--border);
-    border-radius: 10px; padding: 9px 11px; font-size: 12.5px;
+    background: rgba(255,255,255,.04); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 11px; font-size: 13px;
     box-shadow: var(--shadow-sm);
     border-left: 3px solid var(--border);
     transition: background .12s;
   }
-  .act:hover { background: rgba(255,255,255,.05); }
+  .act:hover { background: rgba(255,255,255,.07); }
   .act.border-approve { border-left-color: var(--approve); }
   .act.border-challenge { border-left-color: var(--challenge); }
   .act.border-block { border-left-color: var(--block); }
   .act .who { color: var(--text); font-weight: 600; }
-  .act .meta { color: var(--muted); font-size: 11px; }
-  .chip { font-size: 10px; padding: 2px 8px; border-radius: 999px;
+  .act .meta { color: var(--muted); font-size: 12px; }
+  .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px;
           font-weight: 700; letter-spacing: .3px; }
-  .chip.approve { background: rgba(16,185,129,.15); color: #6ee7b7; }
-  .chip.challenge { background: rgba(245,158,11,.15); color: #fcd34d; }
-  .chip.block { background: rgba(239,68,68,.15); color: #fca5a5; }
+  .chip.approve { background: rgba(16,185,129,.15); color: #34d399; }
+  .chip.challenge { background: rgba(245,158,11,.15); color: #fbbf24; }
+  .chip.block { background: rgba(239,68,68,.15); color: #f87171; }
 
   .honesty-note {
-    font-size: 11px; color: var(--muted); text-align: center;
+    font-size: 12px; color: var(--muted); text-align: center;
     font-style: italic; padding: 8px 10px; background: var(--accent-dim);
-    border-radius: 8px; line-height: 1.4;
+    border-radius: 10px; line-height: 1.4;
   }
 
   .logout-link {
-    background: none; border: none; color: var(--muted); font-size: 11px;
+    background: none; border: none; color: var(--muted); font-size: 12px;
     cursor: pointer; font-family: inherit; padding: 2px 0;
     transition: color .12s; letter-spacing: .2px;
   }
@@ -208,14 +264,14 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   /* ---------- result screens ---------- */
   .result-icon { font-size: 44px; text-align: center; margin: 4px 0 2px; }
   .receipt {
-    background: rgba(255,255,255,.03); border: 1px solid var(--border);
+    background: rgba(255,255,255,.04); border: 1px solid var(--border);
     border-radius: 12px; padding: 14px; font-size: 13px;
     box-shadow: var(--shadow-sm);
   }
   .receipt-row { display: flex; justify-content: space-between;
-                 padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+                 padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.05); }
   .receipt-row:last-child { border-bottom: none; }
-  .receipt-label { color: var(--muted); font-size: 12px; }
+  .receipt-label { color: var(--muted); font-size: 13px; }
   .receipt-val { font-weight: 600; }
 
   footer { text-align: center; margin-top: 30px; color: var(--muted);
@@ -224,19 +280,56 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
              border-bottom: 1px dotted var(--accent); }
 
   /* ---------- USSD feature phone ---------- */
-  .feature-phone { width: 300px; border-radius: 30px; background: #17273d;
-                   border: 1px solid #2c3e57; padding: 18px 16px 22px;
-                   box-shadow: 0 18px 40px rgba(0,0,0,.5); }
-  .ussd-screen {
-    background: #000; border-radius: 8px; min-height: 250px;
-    max-height: 250px; overflow-y: auto; padding: 12px 12px;
-    font-family: "Consolas","Courier New",monospace; color: var(--term-green);
-    font-size: 13px; line-height: 1.55; white-space: pre-wrap;
+  .feature-phone {
+    width: 300px; height: 540px; border-radius: 26px;
+    background: linear-gradient(150deg, #333a45 0%, #262b34 50%, #1c2027 100%);
+    border: 1px solid #0e1116;
+    padding: 12px 16px 16px;
+    box-shadow: 0 20px 45px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.12);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    box-sizing: border-box;
   }
-  .ussd-input-row { display: flex; gap: 8px; margin-top: 12px; }
+  body.light-theme .feature-phone {
+    background: linear-gradient(150deg,#5a626e 0%,#454b54 50%,#353a42 100%);
+    border-color: #20242a; box-shadow: 0 18px 40px rgba(0,0,0,.2);
+  }
+  .fp-speaker {
+    width: 52px; height: 5px; border-radius: 999px;
+    background: linear-gradient(180deg, #05060a, #23262d);
+    box-shadow: inset 0 1px 1px rgba(0,0,0,.9), 0 1px 0 rgba(255,255,255,.06);
+  }
+  .fp-screen-wrap {
+    background: #000; border-radius: 6px; border: 1px solid #0e1116;
+    padding: 4px; width: 100%; flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+  }
+  .ussd-screen {
+    background: #000; border-radius: 3px; flex: 1; min-height: 0;
+    overflow-y: auto; padding: 8px 10px;
+    font-family: "Consolas","Courier New",monospace; color: var(--term-green);
+    font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+  }
   .ussd-screen::-webkit-scrollbar { width: 6px; }
   .ussd-screen::-webkit-scrollbar-thumb { background: #14532d;
                                           border-radius: 3px; }
+  .ussd-input-row { display: flex; gap: 8px; width: 100%; }
+  .ussd-input-row .field { flex: 1; min-width: 0; }
+  .fp-mic {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #3a414d, #12151a);
+    border: 1px solid #0b0d11;
+    box-shadow: inset 0 1px 1px rgba(0,0,0,.8);
+  }
+
+  /* smartphone camera notch */
+  .notch {
+    display: flex; justify-content: center; padding: 8px 0 4px; flex-shrink: 0;
+  }
+  .notch .punch {
+    width: 44px; height: 18px; border-radius: 999px;
+    background: #05070d; border: 1px solid #101623;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.05);
+  }
 </style>
 </head>
 <body>
@@ -244,6 +337,7 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   <header>
     <h1>Session<span>Guard</span> Bank</h1>
     <p>Bank anywhere, anytime &mdash; secure by design</p>
+    <button class="theme-toggle" id="themeToggle" aria-label="Toggle light/dark mode" title="Toggle light/dark mode"></button>
   </header>
 
   <div class="cols">
@@ -251,6 +345,7 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
       <h2>Mobile app channel</h2>
       <div class="device-label" id="deviceLabel">Unfamiliar Device</div>
       <div class="phone" id="appPhone">
+        <div class="notch"><div class="punch"></div></div>
         <div class="statusbar"><span class="sb-left"><div class="logo-mark">SG</div><span id="appClock">9:41</span></span><span>SessionGuard</span></div>
         <div class="screen" id="appScreen"></div>
       </div>
@@ -258,15 +353,19 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
     <section class="device">
       <h2>USSD channel (*737#)</h2>
       <div class="feature-phone">
-        <div class="ussd-screen" id="ussdScreen">Dial *737# to begin.
+        <div class="fp-speaker"></div>
+        <div class="fp-screen-wrap">
+          <div class="ussd-screen" id="ussdScreen">Dial *737# to begin.
 
 _</div>
+        </div>
         <div class="ussd-input-row">
           <input class="field" id="ussdInput" inputmode="numeric"
                  placeholder="type here..." autocomplete="off">
           <button class="btn" style="width:auto;padding:11px 18px;"
                   id="ussdSend">Send</button>
         </div>
+        <div class="fp-mic"></div>
       </div>
     </section>
   </div>
@@ -413,18 +512,28 @@ _</div>
     if (el) el.classList.toggle("device-b", isSwitched());
   }
   function doSwitchDevice() {
-    // Full logout: clear user state, switch the device flag, go to PIN login.
+    // OPTION A: behave like a full logout (consistent with doLogout and
+    // session expiry). Swap the device identity first, then clear the
+    // user and land on the phone-number Welcome screen. Re-entering the
+    // phone number + PIN authenticates the SAME account, now scored
+    // against the NEW (unfamiliar) switched-device identity.
     store.set("sg_switched", true);
+    localStorage.removeItem("sg_user");
     USER = null;
     applyDeviceMode();
-    renderPinLogin();
+    renderWelcome();
   }
   function doSwitchBack() {
+    // Swap the device identity BACK to the original, then fully log out
+    // to the Welcome screen (consistent with doSwitchDevice and doLogout).
+    // Re-entering the phone number + PIN proves it's really the account
+    // owner returning, before dashboard access is restored -- and all
+    // subsequent API calls then score against the ORIGINAL identity.
     localStorage.removeItem("sg_switched");
-    USER = store.get("sg_user");
+    localStorage.removeItem("sg_user");
+    USER = null;
     applyDeviceMode();
-    if (USER) renderDashboard();
-    else renderSignup();
+    renderWelcome();
   }
 
   // ==================== APP SCREENS ====================
@@ -464,6 +573,50 @@ _</div>
     };
   }
 
+  // ---- SCREEN: Welcome (login-first entry point for visitors) ----
+  function renderWelcome(error) {
+    _authenticated = false;
+    clearTimeout(_inactivityTimer);
+    appScreen.innerHTML = `
+      <div style="text-align:center;margin:10px 0 6px">
+        <div class="logo-mark" style="width:52px;height:52px;border-radius:14px;font-size:22px;margin:0 auto 10px">SG</div>
+        <div style="font-size:19px;font-weight:800;letter-spacing:-.3px">Session<span style="color:var(--accent)">Guard</span> Bank</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:4px">Bank anywhere, anytime &mdash; secure by design</div>
+      </div>
+      ${error ? `<div class="banner block" style="margin-top:10px">${error}</div>` : ""}
+      <div style="margin-top:12px">
+        <label class="lbl">Phone number</label>
+        <input class="field" id="wlPhone" placeholder="0801 234 5678" inputmode="tel">
+        <button class="btn" id="wlCont" style="margin-top:10px">Continue</button>
+      </div>
+      <hr style="border-color:var(--border);width:100%;margin-top:14px">
+      <label class="lbl" style="text-align:center;display:block">New to SessionGuard Bank?</label>
+      <button class="btn secondary" id="wlCreate" style="margin-top:6px">Create an account</button>`;
+    wireWelcome();
+  }
+
+  function wireWelcome() {
+    if (document.getElementById("wlCont")) {
+      document.getElementById("wlCont").onclick = async () => {
+        const phone = document.getElementById("wlPhone").value.trim();
+        if (!phone) { renderWelcome(); return; }
+        const cont = document.getElementById("wlCont");
+        cont.disabled = true;
+        cont.textContent = "Checking...";
+        const r = await api("/api/bank/login/", {phone_number: phone});
+        if (r.error) {
+          renderWelcome("No account found with this phone number. Create an account instead?");
+          return;
+        }
+        USER = {user_id: r.user_id, first_name: r.first_name};
+        renderPinLogin();
+      };
+    }
+    if (document.getElementById("wlCreate")) {
+      document.getElementById("wlCreate").onclick = () => renderSignup();
+    }
+  }
+
   // ---- SCREEN: Signup ----
   function renderSignup(error) {
     _authenticated = false;
@@ -476,9 +629,7 @@ _</div>
       <label class="lbl">Phone number</label>
       <input class="field" id="suPhone" placeholder="0801 234 5678" inputmode="tel">
       <button class="btn" id="suBtn">Open account &middot; NGN 500,000</button>
-      <hr style="border-color:var(--border);width:100%">
-      <label class="lbl">Already have an account?</label>
-      <button class="btn secondary" id="goLogin">Log in</button>`;
+      <button class="btn muted" id="suBack" style="font-size:12px">Back</button>`;
     document.getElementById("suBtn").onclick = async () => {
       const name = document.getElementById("suName").value.trim();
       const phone = document.getElementById("suPhone").value.trim();
@@ -489,16 +640,42 @@ _</div>
       store.set("sg_user", USER);
       renderPinSetup();
     };
-    document.getElementById("goLogin").onclick = () => renderPinLogin();
+    document.getElementById("suBack").onclick = () => renderWelcome();
   }
 
   // ---- SCREEN: PIN Setup (after signup) ----
+  // Two-step sequential PIN setup. Step A collects a 6-digit login PIN;
+  // Step B collects a 4-digit transfer PIN. Both are stored independently
+  // in localStorage and never derived from each other.
   function renderPinSetup() {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
-    appScreen.innerHTML = pinPadHTML(6, "Set a 6-digit PIN");
+    appScreen.innerHTML = `
+      <div style="text-align:center;margin-top:6px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Step 1 of 2</div>
+        <div style="font-size:15px;font-weight:700">Set your 6-digit login PIN</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">This secures access to your account</div>
+      </div>
+      <div class="pin-dots" id="pinDots"></div>
+      <div class="pin-grid" id="pinGrid"></div>`;
     initPinPad(6, pin => {
-      store.set("sg_pin", pin);
+      store.set("sg_login_pin", pin);
+      renderPinSetupTransfer();
+    });
+  }
+
+  function renderPinSetupTransfer() {
+    appScreen.innerHTML = `
+      <div class="banner approve" style="margin-bottom:2px">Login PIN saved</div>
+      <div style="text-align:center;margin-top:4px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Step 2 of 2</div>
+        <div style="font-size:15px;font-weight:700">Set your 4-digit transfer PIN</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">You'll use this shorter PIN to confirm transfers</div>
+      </div>
+      <div class="pin-dots" id="pinDots"></div>
+      <div class="pin-grid" id="pinGrid"></div>`;
+    initPinPad(4, pin => {
+      store.set("sg_transfer_pin", pin);
       renderDashboard();
     });
   }
@@ -521,14 +698,16 @@ _</div>
         ? `<button class="btn muted" id="switchBack" style="margin-top:10px;font-size:12px">Switch back to original device</button>`
         : `<button class="btn muted" id="clearUser" style="margin-top:10px;font-size:12px">Not you? Log out</button>`
       }`;
-    // Design choice: one PIN is stored (set during signup). The full 6-digit
-    // value is used for login. Only the FIRST 4 digits are checked for
-    // transaction confirmation, mimicking how some real banks allow a shorter
-    // "quick-confirm" subset. This is a simplification for the prototype —
-    // not real banking security practice.
+    // Design choice: login uses the 6-digit sg_login_pin;
+    // transfer confirmation uses the separate 4-digit sg_transfer_pin.
     initPinPad(6, pin => {
-      const saved = store.get("sg_pin");
+      const saved = store.get("sg_login_pin");
       if (pin === saved) {
+        if (!USER) USER = store.get("sg_user");
+        // Only persist the active user once their login PIN is VERIFIED.
+        // This keeps a mid-login reload (phone entered, PIN not yet done)
+        // from persisting a half-finished login -- it returns to Welcome.
+        if (USER) store.set("sg_user", USER);
         if (isSwitched()) {
           // After entering PIN on switched device, show dashboard with honesty note.
         }
@@ -541,6 +720,8 @@ _</div>
     } else {
       document.getElementById("clearUser").onclick = () => {
         localStorage.removeItem("sg_user");
+        localStorage.removeItem("sg_login_pin");
+        localStorage.removeItem("sg_transfer_pin");
         localStorage.removeItem("sg_pin");
         USER = null;
         renderSignup();
@@ -583,9 +764,6 @@ _</div>
         <div class="amt">${naira(bal)}</div>
       </div>
       <div id="appAlert"></div>
-      <label class="lbl">Add a note (optional, captured for typing rhythm)</label>
-      <input class="field" id="noteIn" placeholder="e.g. Monthly rent payment"
-             autocomplete="off">
       <button class="btn" id="sendBtn">Send Money</button>
       <button class="btn muted" style="font-size:12px" id="swBtn">
         ${isSwitched() ? "Switch back to original device" : "Switch Device"}
@@ -602,9 +780,6 @@ _</div>
           </div>`).join("") ||
         `<div class="meta" style="color:var(--muted);font-size:12px">No transfers yet.</div>`
       }</div>`;
-    // Track keystroke timing on the note input
-    const noteEl = document.getElementById("noteIn");
-    if (noteEl) KSTrack.track(noteEl);
     document.getElementById("sendBtn").onclick = () => renderSendMoney();
     document.getElementById("swBtn").onclick = () => {
       if (isSwitched()) doSwitchBack();
@@ -618,22 +793,27 @@ _</div>
     appScreen.innerHTML = `
       ${error ? `<div class="banner block">${error}</div>` : ""}
       <div style="font-size:15px;font-weight:700">Send Money</div>
-      <label class="lbl">Amount (NGN)</label>
-      <input class="field" id="amtIn" placeholder="e.g. 25,000" inputmode="decimal">
       <label class="lbl">Recipient account number (10 digits)</label>
       <input class="field" id="rcpIn" placeholder="e.g. 1234567890" inputmode="numeric"
              maxlength="10">
       <div id="rcpName" class="acct-name"></div>
       <div id="rcpErr" class="inline-err"></div>
+      <label class="lbl">Amount (NGN)</label>
+      <input class="field" id="amtIn" placeholder="e.g. 25,000" inputmode="decimal">
+      <label class="lbl">Narration (optional)</label>
+      <input class="field" id="narrIn" placeholder="e.g. School fees, August rent"
+             maxlength="140" autocomplete="off">
       <button class="btn" id="sendBtn">Continue</button>
       <button class="btn muted" id="backBtn" style="font-size:12px">Back to dashboard</button>`;
     const amtEl = document.getElementById("amtIn");
     const rcpEl = document.getElementById("rcpIn");
+    const narrEl = document.getElementById("narrIn");
     const nameEl = document.getElementById("rcpName");
     const errEl = document.getElementById("rcpErr");
-    // Track keystroke timing on amount and recipient fields
+    // Track keystroke timing on amount, recipient, and narration fields
     KSTrack.track(amtEl);
     KSTrack.track(rcpEl);
+    KSTrack.track(narrEl);
     // Strip non-digits as typed
     rcpEl.addEventListener("input", () => {
       rcpEl.value = rcpEl.value.replace(/\D/g, "").slice(0, 10);
@@ -661,15 +841,20 @@ _</div>
         return;
       }
       errEl.textContent = "";
-      renderPinConfirm({amount: amt, recipient_id: "BNF-" + rcp});
+      const narr = narrEl.value.trim();
+      renderPinConfirm({
+        amount: amt,
+        recipient_id: "BNF-" + rcp,
+        narration: narr || undefined,
+      });
     };
     document.getElementById("backBtn").onclick = () => renderDashboard();
   }
 
   // ---- SCREEN: PIN Confirmation (before transfer) ----
-  // Uses 4-digit pad for quick transaction confirmation. Compares
-  // against only the FIRST 4 digits of the stored 6-digit login PIN,
-  // as documented in renderPinLogin.
+  // Uses the dedicated 4-digit sg_transfer_pin, independent from the
+  // 6-digit login PIN — matching how real Nigerian banking apps separate
+  // login credentials from transaction authorization.
   let pendingTxn = null;
   function renderPinConfirm(txn, error) {
     pendingTxn = txn;
@@ -677,7 +862,7 @@ _</div>
       ${error ? `<div class="banner block" style="margin-bottom:4px">${error}</div>` : ""}
       ${pinPadHTML(4, `Confirm transfer of ${naira(txn.amount)}`)}`;
     initPinPad(4, pin => {
-      const saved = (store.get("sg_pin") || "").slice(0, 4);
+      const saved = store.get("sg_transfer_pin");
       if (pin === saved) { submitTransfer(pendingTxn); }
       else { renderPinConfirm(txn, "Incorrect PIN. Try again."); }
     });
@@ -723,6 +908,7 @@ _</div>
       <div class="receipt">
         <div class="receipt-row"><span class="receipt-label">Amount</span><span class="receipt-val">${naira(txn ? txn.amount : 0)}</span></div>
         <div class="receipt-row"><span class="receipt-label">Recipient</span><span class="receipt-val">${txn ? txn.recipient_id : "-"}</span></div>
+        ${txn && txn.narration ? `<div class="receipt-row"><span class="receipt-label">Narration</span><span class="receipt-val">${txn.narration}</span></div>` : ""}
         <div class="receipt-row"><span class="receipt-label">New balance</span><span class="receipt-val">${naira(bal)}</span></div>
         <div class="receipt-row"><span class="receipt-label">Reference</span><span class="receipt-val">${ref}</span></div>
         <div class="receipt-row"><span class="receipt-label">Date</span><span class="receipt-val">${now}</span></div>
@@ -784,6 +970,9 @@ _</div>
   ussdInput.addEventListener("keydown", e => {
     if (e.key === "Enter") ussdStep();
   });
+  // Capture genuine keystroke rhythm on the USSD input field (real typing,
+  // not button clicks, produces real timing data for the analytics view).
+  KSTrack.track(ussdInput);
 
   async function ussdStep() {
     const v = ussdInput.value.trim();
@@ -904,6 +1093,22 @@ _</div>
     term(`Thank you for banking with SessionGuard.\n\nDial *737# to begin again.`);
   }
 
+  // ==================== LIGHT / DARK MODE TOGGLE ====================
+  const THEME_KEY = "sg_theme";
+  function applyTheme() {
+    const light = store.get(THEME_KEY) === "light";
+    document.body.classList.toggle("light-theme", light);
+    document.getElementById("themeToggle").textContent = light ? "\u263E" : "\u2600";
+    document.getElementById("themeToggle").setAttribute("aria-label",
+      light ? "Switch to dark mode" : "Switch to light mode");
+  }
+  document.getElementById("themeToggle").onclick = () => {
+    const current = store.get(THEME_KEY);
+    store.set(THEME_KEY, current === "light" ? "dark" : "light");
+    applyTheme();
+  };
+  applyTheme();
+
   // ==================== LOGOUT + INACTIVITY TIMEOUT ====================
   const SESSION_TIMEOUT_MS = 180000; // 3 minutes of inactivity
   let _inactivityTimer = null;
@@ -917,6 +1122,7 @@ _</div>
     if (_authenticated) {
       _inactivityTimer = setTimeout(() => {
         _authenticated = false;
+        USER = null;
         renderPinLogin("Your session has expired for your security. Please log in again.");
       }, SESSION_TIMEOUT_MS);
     }
@@ -929,21 +1135,34 @@ _</div>
   function doLogout() {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
-    renderPinLogin();
+    // Full logout: clear persisted identity so the Welcome (phone-number
+    // entry) screen shows, and stays on reload -- NOT the PIN pad.
+    localStorage.removeItem("sg_user");
+    USER = null;
+    renderWelcome();
   }
 
   // ==================== BOOT ====================
   ensureDevices();
   applyDeviceMode();
+  // Legacy migration: if the old single sg_pin key exists but the new
+  // two-PIN keys don't, treat as incomplete and force re-setup.
+  if (store.get("sg_pin") && !store.get("sg_login_pin")) {
+    localStorage.removeItem("sg_pin");
+    localStorage.removeItem("sg_user");
+    USER = null;
+  }
   if (isSwitched()) {
     // Was in switched-device mode last session: show PIN login, not dashboard.
     renderPinLogin();
   } else if (USER) {
-    const pin = store.get("sg_pin");
-    if (pin) renderDashboard();
+    const hasLoginPin = store.get("sg_login_pin");
+    const hasTransferPin = store.get("sg_transfer_pin");
+    if (hasLoginPin && hasTransferPin) renderDashboard();
     else renderPinSetup();
   } else {
-    renderSignup();
+    // Visitor with no active user context: login-first Welcome.
+    renderWelcome();
   }
 </script>
 </body>
