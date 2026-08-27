@@ -18,7 +18,8 @@ from django.contrib import admin
 from django.urls import path
 
 from core.bank_views import (
-    BankAppView, bank_login, bank_send_money, bank_signup, bank_state,
+    BankAppView, bank_login, bank_lookup_account, bank_send_money,
+    bank_signup, bank_state,
 )
 from core.demo_views import ControlRoomView, demo_scenarios, toggle_offline
 from core.views import SessionEventView
@@ -41,4 +42,5 @@ urlpatterns = [
     path('api/bank/login/', bank_login, name='bank-login'),
     path('api/bank/state/<uuid:user_id>/', bank_state, name='bank-state'),
     path('api/bank/send-money/', bank_send_money, name='bank-send-money'),
+    path('api/bank/lookup-account/', bank_lookup_account, name='bank-lookup-account'),
 ]

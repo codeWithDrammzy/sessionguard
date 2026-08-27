@@ -621,3 +621,31 @@ class FraudLabel(models.Model):
     def __str__(self):
         state = "attack" if self.is_attack else "benign"
         return f"Label for session {self.session_id}: {state}"
+
+
+class RecipientDirectory(models.Model):
+    """
+    Account number -> display name mapping for the bank demo.
+
+    Mirrors real Nigerian banking "name enquiry": when a customer enters a
+    10-digit NUBAN account number, the system looks up (or generates) the
+    account holder's name and displays it for confirmation before the
+    transfer proceeds.
+    """
+
+    account_number = models.CharField(
+        max_length=10,
+        unique=True,
+        help_text="10-digit NUBAN account number.",
+    )
+    display_name = models.CharField(
+        max_length=120,
+        help_text="Account holder's full name.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["account_number"]
+
+    def __str__(self):
+        return f"{self.account_number} -> {self.display_name}"

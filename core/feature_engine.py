@@ -39,8 +39,9 @@ KNOWN LIMITATION (for the write-up's honest-failure-analysis section):
   duration baseline; users with less history get a default 0.0 ("cannot
   judge yet"), meaning very new USSD customers are temporarily blind to
   this particular signal rather than falsely flagged by it.
-  keystroke_deviation_score needs >= 3 prior app sessions with keystroke
-  data; users with less history get NULL (cannot judge yet).
+  keystroke_deviation_score needs >= 5 prior app sessions with keystroke
+  data; live demo users type with more natural variance than synthetic
+  data, so a higher baseline prevents false positives on new users.
 
 Usage:
     python core/feature_engine.py            # batch over whole dataset
@@ -78,7 +79,7 @@ from core.models import (  # noqa: E402
 BATCH_SIZE = 500  # bulk_create chunk size
 VELOCITY_WINDOW = timedelta(minutes=5)
 MIN_USSD_BASELINE_SESSIONS = 3  # below this: not enough history to judge
-MIN_KEYSTROKE_BASELINE_SESSIONS = 3  # below this: not enough keystroke history
+MIN_KEYSTROKE_BASELINE_SESSIONS = 5  # below this: not enough keystroke history
 HOUR_CAP_MINUTES = 360  # >=6h outside any window => hour_deviation 1.0
 
 

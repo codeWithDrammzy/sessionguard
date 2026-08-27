@@ -10,90 +10,213 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
 <title>SessionGuard Bank &mdash; Customer Experience</title>
 <style>
   :root {
-    --bg: #0d1b2a; --card: #1b263b; --border: #24344d;
-    --accent: #6fffe9; --text: #fff; --muted: #cbd5e1;
-    --approve: #059669; --challenge: #ca8a04; --block: #dc2626;
+    --bg: #0a1120; --card: #131d30; --border: #1e2d47;
+    --accent: #6fffe9; --accent-dim: rgba(111,255,233,.12);
+    --text: #e8edf4; --muted: #7f8da4;
+    --approve: #10b981; --challenge: #f59e0b; --block: #ef4444;
     --term-green: #4ade80;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.35);
+    --shadow-md: 0 4px 12px rgba(0,0,0,.4);
+    --shadow-lg: 0 8px 24px rgba(0,0,0,.45);
+  }
+  .device-b {
+    --accent: #f59e0b; --accent-dim: rgba(245,158,11,.12);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
     background: var(--bg); color: var(--text); min-height: 100vh;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-                 "Helvetica Neue", Arial, sans-serif;
-    padding: 28px 32px 40px;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                 "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    padding: 28px 32px 40px; -webkit-font-smoothing: antialiased;
   }
   .wrap { max-width: 1120px; margin: 0 auto; }
-  header { text-align: center; margin-bottom: 26px; }
-  header h1 { font-size: 26px; }
+  header { text-align: center; margin-bottom: 28px; }
+  header h1 { font-size: 24px; font-weight: 700; letter-spacing: -.3px; }
   header h1 span { color: var(--accent); }
-  header p { color: var(--muted); font-size: 14px; margin-top: 6px; }
+  header p { color: var(--muted); font-size: 13px; margin-top: 5px;
+             letter-spacing: .2px; }
 
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
   @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
 
   .device {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 20px; padding: 22px; display: flex;
-    flex-direction: column; align-items: center; gap: 16px;
+    flex-direction: column; align-items: center; gap: 14px;
+    box-shadow: var(--shadow-md);
   }
-  .device h2 { font-size: 13px; letter-spacing: 1.6px; text-transform:
-               uppercase; color: var(--muted); }
+  .device h2 { font-size: 11px; letter-spacing: 2px; text-transform:
+               uppercase; color: var(--muted); font-weight: 600; }
 
-  /* ---------- shared phone chrome ---------- */
   .phone {
-    width: 320px; border-radius: 26px; background: #10233a;
-    border: 1px solid #2c3e57; box-shadow: 0 18px 40px rgba(0,0,0,.45);
+    width: 320px; border-radius: 28px;
+    background: linear-gradient(165deg, #152238 0%, #0d1a2e 40%, #0a1424 100%);
+    border: 1px solid rgba(255,255,255,.06);
+    box-shadow: 0 20px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.04);
     overflow: hidden; display: flex; flex-direction: column;
   }
-  .screen { padding: 18px; min-height: 470px; display: flex;
-            flex-direction: column; gap: 12px; }
-  .statusbar { display: flex; justify-content: space-between;
-               font-size: 11px; color: var(--muted); padding: 0 2px; }
+  .device-b .phone { border-color: rgba(245,158,11,.2); }
+  .screen {
+    padding: 16px 18px; min-height: 480px; display: flex;
+    flex-direction: column; gap: 10px;
+    animation: fadeIn .3s ease-out;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .statusbar {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; color: var(--muted); padding: 0 2px;
+    margin-bottom: 2px; letter-spacing: .3px;
+  }
+  .statusbar .sb-left { display: flex; align-items: center; gap: 5px; }
+
+  .logo-mark {
+    width: 20px; height: 20px; border-radius: 6px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), #38bdf8);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 800; color: #06283d; letter-spacing: -.5px;
+  }
+
+  .device-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    text-transform: uppercase; text-align: center; padding: 4px 12px;
+    border-radius: 8px; background: var(--accent-dim); color: var(--accent);
+    display: none;
+  }
+  .device-b .device-label { display: block; }
 
   .btn {
-    border: none; border-radius: 10px; padding: 11px 14px;
+    border: none; border-radius: 10px; padding: 12px 14px;
     font-weight: 600; font-size: 14px; cursor: pointer;
     background: var(--accent); color: #06283d; font-family: inherit;
-    width: 100%;
+    width: 100%; transition: filter .15s, transform .1s, box-shadow .15s;
+    box-shadow: var(--shadow-sm);
   }
+  .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: scale(.98); filter: brightness(.95); }
   .btn.secondary { background: transparent; color: var(--accent);
-                   border: 1px solid var(--accent); }
+                   border: 1px solid rgba(111,255,233,.3); box-shadow: none; }
+  .btn.secondary:hover { background: var(--accent-dim); }
+  .btn.muted { background: #1a2744; color: var(--muted);
+               border: 1px solid var(--border); box-shadow: none; }
+  .btn.muted:hover { background: #213050; color: var(--text); }
   .btn.danger { background: var(--block); color: #fff; }
   .btn:disabled { opacity: .5; cursor: wait; }
   input.field {
-    width: 100%; background: #0b1c30; border: 1px solid var(--border);
-    border-radius: 10px; color: var(--text); padding: 11px 12px;
+    width: 100%; background: rgba(255,255,255,.04);
+    border: 1px solid var(--border);
+    border-radius: 10px; color: var(--text); padding: 12px 13px;
     font-size: 14px; font-family: inherit;
+    transition: border-color .15s, box-shadow .15s;
   }
-  input.field:focus { outline: none; border-color: var(--accent); }
-  label.lbl { font-size: 12px; color: var(--muted); }
+  input.field::placeholder { color: rgba(255,255,255,.2); }
+  input.field:focus { outline: none; border-color: var(--accent);
+                      box-shadow: 0 0 0 3px rgba(111,255,253,.08); }
+  label.lbl { font-size: 11px; color: var(--muted); letter-spacing: .4px;
+             font-weight: 500; text-transform: uppercase; }
 
   .banner { border-radius: 10px; padding: 11px 13px; color: #fff;
-            font-weight: 700; font-size: 13px; text-align: center; }
+            font-weight: 700; font-size: 13px; text-align: center;
+            box-shadow: var(--shadow-sm); }
   .banner.approve { background: var(--approve); }
   .banner.challenge { background: var(--challenge); }
   .banner.block { background: var(--block); }
-  .msg { font-size: 13.5px; line-height: 1.5; color: var(--text); }
+  .msg { font-size: 13.5px; line-height: 1.55; color: var(--text); }
+  .inline-err { color: #fca5a5; font-size: 11px; margin-top: 3px;
+                font-weight: 500; }
+  .acct-name { color: var(--accent); font-size: 13px; font-weight: 600;
+               margin-top: 2px; min-height: 18px; }
+
+  /* ---------- PIN pad ---------- */
+  .pin-dots { display: flex; gap: 14px; justify-content: center; margin: 14px 0; }
+  .pin-dot {
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid var(--border); background: transparent;
+    transition: background .15s, border-color .15s, transform .1s;
+  }
+  .pin-dot.filled { background: var(--accent); border-color: var(--accent);
+                    transform: scale(1.1); }
+  .pin-grid {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    max-width: 240px; margin: 0 auto;
+  }
+  .pin-key {
+    height: 50px; border-radius: 12px; border: 1px solid var(--border);
+    background: rgba(255,255,255,.03); color: var(--text); font-size: 20px;
+    font-weight: 600; cursor: pointer; display: flex;
+    align-items: center; justify-content: center;
+    transition: background .12s, transform .1s;
+  }
+  .pin-key:hover { background: rgba(255,255,255,.06); }
+  .pin-key:active { background: rgba(255,255,255,.09); transform: scale(.95); }
+  .pin-key.del { background: transparent; border: none; font-size: 18px;
+                 color: var(--muted); }
 
   /* ---------- dashboard ---------- */
-  .balance-card { background: linear-gradient(135deg,#123a5c,#0e2c49);
-                  border-radius: 14px; padding: 16px; }
-  .balance-card small { color: var(--muted); font-size: 11px;
-                        letter-spacing: 1px; text-transform: uppercase; }
-  .balance-card .amt { font-size: 27px; font-weight: 800; margin-top: 4px;
-                       letter-spacing: .5px; }
-  .activity { display: flex; flex-direction: column; gap: 8px;
-              overflow-y: auto; max-height: 180px; }
-  .act { display: flex; justify-content: space-between; align-items:center;
-         background: #0b1c30; border: 1px solid var(--border);
-         border-radius: 10px; padding: 9px 11px; font-size: 12.5px; }
+  .dash-header { display: flex; justify-content: space-between;
+                 align-items: center; width: 100%; }
+  .acct-masked { font-size: 12px; color: var(--muted); letter-spacing: 2.5px;
+                 text-align: center; margin-bottom: 2px; font-weight: 500; }
+  .balance-card {
+    background: linear-gradient(135deg,#163a5f 0%,#0f2b47 50%,#0c2038 100%);
+    border-radius: 14px; padding: 18px 16px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.05);
+  }
+  .balance-card small { color: var(--muted); font-size: 10px;
+                        letter-spacing: 1.5px; text-transform: uppercase;
+                        font-weight: 600; }
+  .balance-card .amt { font-size: 30px; font-weight: 800; margin-top: 6px;
+                       letter-spacing: .3px; line-height: 1.1; }
+  .activity { display: flex; flex-direction: column; gap: 6px;
+              overflow-y: auto; max-height: 160px; }
+  .act {
+    display: flex; justify-content: space-between; align-items: center;
+    background: rgba(255,255,255,.03); border: 1px solid var(--border);
+    border-radius: 10px; padding: 9px 11px; font-size: 12.5px;
+    box-shadow: var(--shadow-sm);
+    border-left: 3px solid var(--border);
+    transition: background .12s;
+  }
+  .act:hover { background: rgba(255,255,255,.05); }
+  .act.border-approve { border-left-color: var(--approve); }
+  .act.border-challenge { border-left-color: var(--challenge); }
+  .act.border-block { border-left-color: var(--block); }
   .act .who { color: var(--text); font-weight: 600; }
   .act .meta { color: var(--muted); font-size: 11px; }
-  .chip { font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
-          font-weight: 700; }
-  .chip.approve { background: rgba(5,150,105,.18); color: #6ee7b7; }
-  .chip.challenge { background: rgba(202,138,4,.18); color: #fcd34d; }
-  .chip.block { background: rgba(220,38,38,.18); color: #fca5a5; }
+  .chip { font-size: 10px; padding: 2px 8px; border-radius: 999px;
+          font-weight: 700; letter-spacing: .3px; }
+  .chip.approve { background: rgba(16,185,129,.15); color: #6ee7b7; }
+  .chip.challenge { background: rgba(245,158,11,.15); color: #fcd34d; }
+  .chip.block { background: rgba(239,68,68,.15); color: #fca5a5; }
+
+  .honesty-note {
+    font-size: 11px; color: var(--muted); text-align: center;
+    font-style: italic; padding: 8px 10px; background: var(--accent-dim);
+    border-radius: 8px; line-height: 1.4;
+  }
+
+  .logout-link {
+    background: none; border: none; color: var(--muted); font-size: 11px;
+    cursor: pointer; font-family: inherit; padding: 2px 0;
+    transition: color .12s; letter-spacing: .2px;
+  }
+  .logout-link:hover { color: var(--block); }
+
+  /* ---------- result screens ---------- */
+  .result-icon { font-size: 44px; text-align: center; margin: 4px 0 2px; }
+  .receipt {
+    background: rgba(255,255,255,.03); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px; font-size: 13px;
+    box-shadow: var(--shadow-sm);
+  }
+  .receipt-row { display: flex; justify-content: space-between;
+                 padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.04); }
+  .receipt-row:last-child { border-bottom: none; }
+  .receipt-label { color: var(--muted); font-size: 12px; }
+  .receipt-val { font-weight: 600; }
 
   footer { text-align: center; margin-top: 30px; color: var(--muted);
            font-size: 13px; }
@@ -120,21 +243,18 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
 <div class="wrap">
   <header>
     <h1>Session<span>Guard</span> Bank</h1>
-    <p>The customer experience on both Nigerian channels &mdash; every action scored by the real engine</p>
+    <p>Bank anywhere, anytime &mdash; secure by design</p>
   </header>
 
   <div class="cols">
-
-    <!-- ================= LEFT: smartphone app ================= -->
-    <section class="device">
+    <section class="device" id="appDevice">
       <h2>Mobile app channel</h2>
+      <div class="device-label" id="deviceLabel">Unfamiliar Device</div>
       <div class="phone" id="appPhone">
-        <div class="statusbar"><span id="appClock">9:41</span><span>SessionGuard Bank</span></div>
+        <div class="statusbar"><span class="sb-left"><div class="logo-mark">SG</div><span id="appClock">9:41</span></span><span>SessionGuard</span></div>
         <div class="screen" id="appScreen"></div>
       </div>
     </section>
-
-    <!-- ============ RIGHT: USSD feature phone ============= -->
     <section class="device">
       <h2>USSD channel (*737#)</h2>
       <div class="feature-phone">
@@ -149,7 +269,6 @@ _</div>
         </div>
       </div>
     </section>
-
   </div>
 
   <footer>
@@ -161,7 +280,6 @@ _</div>
 
 <script>
   const CSRF_TOKEN = "{{ csrf_token }}";
-  // ---------------- tiny helpers ----------------
   const store = {
     get(k) { try { return JSON.parse(localStorage.getItem(k)); }
              catch (e) { return null; } },
@@ -169,18 +287,14 @@ _</div>
   };
   const randHex = n => Array.from(crypto.getRandomValues(
       new Uint8Array(n / 2))).map(b => b.toString(16).padStart(2, "0")).join("");
-  const naira = s => "NGN " + Number(s).toLocaleString("en-NG",
-                                                     {minimumFractionDigits: 2});
+  const naira = s => "NGN " + Number(s || 0).toLocaleString("en-NG",
+                                                      {minimumFractionDigits: 2});
 
   let USER = store.get("sg_user");
   let APPDEV = store.get("sg_app_device");
   let USSD = store.get("sg_ussd_device");
 
   function ensureDevices() {
-    // App and USSD keep SEPARATE apparent identities in localStorage:
-    // a real customer's browser and their SIM look like different
-    // 'devices' to the bank. The SIM id is deliberately SHARED -- it is
-    // the same physical SIM across both channels.
     if (!APPDEV) {
       APPDEV = {
         device_fingerprint: randHex(64),
@@ -191,15 +305,9 @@ _</div>
       };
       store.set("sg_app_device", APPDEV);
     }
-    if (!USER && APPDEV.created && Date.now() - APPDEV.created > 1000 * 60 * 60 * 24) {
-      // stale anonymous device from an abandoned signup: harmless, keep
-    }
     if (!USSD) {
       USSD = {
         ip_or_cell_tower_id: "TWR-USSD-" + randHex(8),
-        // Same neighbourhood as the app identity: one physical SIM
-        // registers on nearby cells. A fresh random geohash here would
-        // brand every first USSD session as a location change.
         location_geohash: APPDEV.location_geohash,
       };
       store.set("sg_ussd_device", USSD);
@@ -215,128 +323,452 @@ _</div>
     return res.json();
   }
 
-  // ================= LEFT PHONE: mobile app =================
-  const appScreen = document.getElementById("appScreen");
-
-  function renderAuth(prefillError) {
-    appScreen.innerHTML = `
-      ${prefillError ? `<div class="banner block">${prefillError}</div>` : ""}
-      <label class="lbl">New here? Create your account</label>
-      <input class="field" id="suName" placeholder="First name">
-      <input class="field" id="suPhone" placeholder="Phone number" inputmode="tel">
-      <button class="btn" id="suBtn">Open account &middot; NGN 500,000</button>
-      <hr style="border-color:var(--border);width:100%">
-      <label class="lbl">Already banking with us?</label>
-      <input class="field" id="liPhone" placeholder="Phone number" inputmode="tel">
-      <button class="btn secondary" id="liBtn">Log in</button>`;
-    document.getElementById("suBtn").onclick = async () => {
-      const r = await api("/api/bank/signup/", {
-        first_name: suName.value.trim(), phone_number: suPhone.value.trim(),
-      });
-      r.error ? renderAuth(r.error) : completeAuth(r);
-    };
-    document.getElementById("liBtn").onclick = async () => {
-      const r = await api("/api/bank/login/",
-                          {phone_number: liPhone.value.trim()});
-      r.error ? renderAuth(r.error) : completeAuth(r);
-    };
-  }
-
-  function completeAuth(r) {
-    USER = {user_id: r.user_id, first_name: r.first_name};
-    store.set("sg_user", USER);
-    renderDashboard();
-  }
-
   async function refreshState() {
+    if (!USER) return null;
     const r = await fetch(`/api/bank/state/${USER.user_id}/`);
     return r.json();
   }
 
-  function renderDashboard(state) {
-    appScreen.innerHTML = `
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <b>Hi, ${USER.first_name}</b>
-        <button class="btn danger" style="width:auto;padding:6px 10px;font-size:11px" id="swBtn">Switch Device</button>
-      </div>
-      <div class="balance-card">
-        <small>Ledger balance</small>
-        <div class="amt" id="balAmt">${naira(state.balance)}</div>
-      </div>
-      <div id="appAlert"></div>
-      <label class="lbl">Send money</label>
-      <input class="field" id="amtIn" placeholder="Amount (NGN)" inputmode="decimal">
-      <input class="field" id="rcpIn" placeholder="Recipient account / ID">
-      <button class="btn" id="sendBtn">Send transfer</button>
-      <label class="lbl">Recent activity</label>
-      <div class="activity" id="actList"></div>`;
-    actList.innerHTML = (state.recent || []).map(a => `
-      <div class="act">
-        <div><div class="who">${a.recipient}</div>
-             <div class="meta">${a.time} &middot; ${a.channel.toUpperCase()} &middot; ${a.reference}</div></div>
-        <div style="text-align:right">
-          <div>${naira(a.amount)}</div>
-          <span class="chip ${a.outcome}">${a.outcome}</span></div>
-      </div>`).join("") ||
-      `<div class="meta" style="color:var(--muted);font-size:12px">No transfers yet.</div>`;
+  function maskedAccount(userId) {
+    const tail = userId.replace(/-/g, "").slice(-4).toUpperCase();
+    return `**** **** ** ${tail}`;
+  }
 
-    sendBtn.onclick = () => submitTransfer({
-      amount: amtIn.value.trim(), recipient_id: rcpIn.value.trim(),
-    });
-    swBtn.onclick = () => {
-      // Simulate the customer opening the app on a DIFFERENT phone:
-      // fingerprint changes, everything else stays.
-      APPDEV.device_fingerprint = randHex(64);
-      store.set("sg_app_device", APPDEV);
-      appAlert.innerHTML =
-        `<div class="banner challenge">New device will be used on your next action.</div>`;
+  // ==================== KEYSTROKE TRACKER ====================
+  // Captures hold-time (keydown->keyup) and inter-key interval across
+  // ANY tracked input field. On transfer submit, aggregate() produces
+  // combined avg_hold_time_ms / avg_interval_ms / typing_speed_cpm.
+  const KSTrack = {
+    _events: [],        // [{t, type:"down"|"up"}] chronologically ordered
+    _lastKeyTime: null,  // timestamp of last keydown (for interval calc)
+    _lastField: null,    // which field we're currently tracking
+
+    track(el) {
+      if (el._ksTracked) return;
+      el._ksTracked = true;
+      el.addEventListener("keydown", e => {
+        if (e.key.length > 1 && e.key !== "Backspace" && e.key !== "Delete") return;
+        this._events.push({t: performance.now(), type: "down", field: el.id || "?"});
+      });
+      el.addEventListener("keyup", e => {
+        if (e.key.length > 1 && e.key !== "Backspace" && e.key !== "Delete") return;
+        this._events.push({t: performance.now(), type: "up", field: el.id || "?"});
+      });
+    },
+
+    aggregate() {
+      if (this._events.length < 2) return null;
+      const holds = [];
+      const intervals = [];
+      let lastUp = null;
+      for (const ev of this._events) {
+        if (ev.type === "up") {
+          const downEv = this._events.find(
+            (e, i) => e.type === "down" && e.field === ev.field
+                     && !this._events.slice(0, i).some(
+                       u => u.type === "up" && u.field === e.field
+                     )
+          );
+          // Simpler approach: pair consecutive down/up
+        }
+      }
+      // Rebuild with proper pairing
+      const stack = [];
+      const pairedHolds = [];
+      for (const ev of this._events) {
+        if (ev.type === "down") stack.push(ev);
+        else if (ev.type === "up" && stack.length) {
+          const down = stack.shift();
+          pairedHolds.push(ev.t - down.t);
+        }
+      }
+      // Intervals: time between successive keydowns
+      const downs = this._events.filter(e => e.type === "down");
+      for (let i = 1; i < downs.length; i++) {
+        intervals.push(downs[i].t - downs[i-1].t);
+      }
+      if (!pairedHolds.length) return null;
+      const avgHold = pairedHolds.reduce((a,b) => a+b, 0) / pairedHolds.length;
+      const avgInterval = intervals.length
+        ? intervals.reduce((a,b) => a+b, 0) / intervals.length
+        : avgHold * 1.5;
+      const totalMs = this._events[this._events.length-1].t - this._events[0].t;
+      const cpm = totalMs > 0
+        ? (pairedHolds.length / totalMs) * 60000
+        : 200;
+      return {
+        avg_hold_time_ms: Math.round(avgHold * 10) / 10,
+        avg_interval_ms: Math.round(avgInterval * 10) / 10,
+        typing_speed_cpm: Math.round(cpm),
+      };
+    },
+
+    reset() { this._events = []; this._lastKeyTime = null; },
+  };
+
+  // ==================== SWITCHED DEVICE MODE ====================
+  function isSwitched() { return !!store.get("sg_switched"); }
+  function applyDeviceMode() {
+    const el = document.getElementById("appDevice");
+    if (el) el.classList.toggle("device-b", isSwitched());
+  }
+  function doSwitchDevice() {
+    // Full logout: clear user state, switch the device flag, go to PIN login.
+    store.set("sg_switched", true);
+    USER = null;
+    applyDeviceMode();
+    renderPinLogin();
+  }
+  function doSwitchBack() {
+    localStorage.removeItem("sg_switched");
+    USER = store.get("sg_user");
+    applyDeviceMode();
+    if (USER) renderDashboard();
+    else renderSignup();
+  }
+
+  // ==================== APP SCREENS ====================
+  const appScreen = document.getElementById("appScreen");
+
+  function pinPadHTML(length, title) {
+    return `
+      <div style="text-align:center;margin-top:8px">
+        <div style="font-size:14px;font-weight:600">${title}</div>
+        <div class="pin-dots" id="pinDots"></div>
+        <div class="pin-grid" id="pinGrid"></div>
+      </div>`;
+  }
+
+  function initPinPad(length, onComplete) {
+    let code = "";
+    const dots = document.getElementById("pinDots");
+    const grid = document.getElementById("pinGrid");
+    if (!dots || !grid) return;
+    dots.innerHTML = Array.from({length}, () =>
+      `<div class="pin-dot"></div>`).join("");
+    const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
+    grid.innerHTML = keys.map(k => {
+      if (k === "") return `<div class="pin-key" style="visibility:hidden"></div>`;
+      if (k === "del") return `<div class="pin-key del" data-k="del">&larr;</div>`;
+      return `<div class="pin-key" data-k="${k}">${k}</div>`;
+    }).join("");
+    grid.onclick = e => {
+      const btn = e.target.closest("[data-k]");
+      if (!btn) return;
+      const k = btn.dataset.k;
+      if (k === "del") { code = code.slice(0, -1); }
+      else if (code.length < length) { code += k; }
+      dots.querySelectorAll(".pin-dot").forEach((d, i) =>
+        d.classList.toggle("filled", i < code.length));
+      if (code.length === length) setTimeout(() => onComplete(code), 200);
     };
   }
 
+  // ---- SCREEN: Signup ----
+  function renderSignup(error) {
+    _authenticated = false;
+    clearTimeout(_inactivityTimer);
+    appScreen.innerHTML = `
+      ${error ? `<div class="banner block">${error}</div>` : ""}
+      <div style="font-size:16px;font-weight:700;text-align:center">Create your account</div>
+      <label class="lbl">Full name</label>
+      <input class="field" id="suName" placeholder="e.g. Adaeze Nwosu">
+      <label class="lbl">Phone number</label>
+      <input class="field" id="suPhone" placeholder="0801 234 5678" inputmode="tel">
+      <button class="btn" id="suBtn">Open account &middot; NGN 500,000</button>
+      <hr style="border-color:var(--border);width:100%">
+      <label class="lbl">Already have an account?</label>
+      <button class="btn secondary" id="goLogin">Log in</button>`;
+    document.getElementById("suBtn").onclick = async () => {
+      const name = document.getElementById("suName").value.trim();
+      const phone = document.getElementById("suPhone").value.trim();
+      if (!name || !phone) { renderSignup("Please enter your name and phone number."); return; }
+      const r = await api("/api/bank/signup/", {first_name: name, phone_number: phone});
+      if (r.error) { renderSignup(r.error); return; }
+      USER = {user_id: r.user_id, first_name: r.first_name};
+      store.set("sg_user", USER);
+      renderPinSetup();
+    };
+    document.getElementById("goLogin").onclick = () => renderPinLogin();
+  }
+
+  // ---- SCREEN: PIN Setup (after signup) ----
+  function renderPinSetup() {
+    _authenticated = false;
+    clearTimeout(_inactivityTimer);
+    appScreen.innerHTML = pinPadHTML(6, "Set a 6-digit PIN");
+    initPinPad(6, pin => {
+      store.set("sg_pin", pin);
+      renderDashboard();
+    });
+  }
+
+  // ---- SCREEN: PIN Login ----
+  function renderPinLogin(error) {
+    _authenticated = false;
+    clearTimeout(_inactivityTimer);
+    applyDeviceMode();
+    const switchedBanner = isSwitched()
+      ? `<div class="banner challenge" style="margin-bottom:6px">
+           Logged out &mdash; simulating an unfamiliar device.
+         </div>`
+      : "";
+    appScreen.innerHTML = `
+      ${switchedBanner}
+      ${error ? `<div class="banner block" style="margin-bottom:4px">${error}</div>` : ""}
+      ${pinPadHTML(6, isSwitched() ? "Enter PIN on new device" : "Enter your 6-digit PIN")}
+      ${isSwitched()
+        ? `<button class="btn muted" id="switchBack" style="margin-top:10px;font-size:12px">Switch back to original device</button>`
+        : `<button class="btn muted" id="clearUser" style="margin-top:10px;font-size:12px">Not you? Log out</button>`
+      }`;
+    // Design choice: one PIN is stored (set during signup). The full 6-digit
+    // value is used for login. Only the FIRST 4 digits are checked for
+    // transaction confirmation, mimicking how some real banks allow a shorter
+    // "quick-confirm" subset. This is a simplification for the prototype —
+    // not real banking security practice.
+    initPinPad(6, pin => {
+      const saved = store.get("sg_pin");
+      if (pin === saved) {
+        if (isSwitched()) {
+          // After entering PIN on switched device, show dashboard with honesty note.
+        }
+        renderDashboard();
+      }
+      else { renderPinLogin("Incorrect PIN. Try again."); }
+    });
+    if (isSwitched()) {
+      document.getElementById("switchBack").onclick = () => doSwitchBack();
+    } else {
+      document.getElementById("clearUser").onclick = () => {
+        localStorage.removeItem("sg_user");
+        localStorage.removeItem("sg_pin");
+        USER = null;
+        renderSignup();
+      };
+    }
+  }
+
+  // ---- SCREEN: Dashboard ----
+  async function renderDashboard() {
+    applyDeviceMode();
+    resetInactivityTimer();
+    appScreen.innerHTML = `<div style="text-align:center;color:var(--muted);padding:40px 0">Loading...</div>`;
+    const state = await refreshState();
+    if (!state || state.error) {
+      localStorage.removeItem("sg_user");
+      localStorage.removeItem("sg_pin");
+      USER = null;
+      renderSignup();
+      return;
+    }
+    KSTrack.reset();
+    const bal = Number(state.balance || 0);
+    const switched = isSwitched();
+    _authenticated = true;
+    resetInactivityTimer();
+    appScreen.innerHTML = `
+      <div class="dash-header">
+        <div>
+          <div style="font-size:14px;font-weight:700">Hi, ${state.first_name}</div>
+          <div class="acct-masked">${maskedAccount(state.user_id)}</div>
+        </div>
+        <button class="logout-link" id="logoutBtn">Log out</button>
+      </div>
+      ${switched ? `<div class="honesty-note">
+        Note: typing rhythm reflects this browser session &mdash;
+        a genuine attacker's rhythm would likely differ more.
+      </div>` : ""}
+      <div class="balance-card">
+        <small>Ledger balance</small>
+        <div class="amt">${naira(bal)}</div>
+      </div>
+      <div id="appAlert"></div>
+      <label class="lbl">Add a note (optional, captured for typing rhythm)</label>
+      <input class="field" id="noteIn" placeholder="e.g. Monthly rent payment"
+             autocomplete="off">
+      <button class="btn" id="sendBtn">Send Money</button>
+      <button class="btn muted" style="font-size:12px" id="swBtn">
+        ${isSwitched() ? "Switch back to original device" : "Switch Device"}
+      </button>
+      <label class="lbl">Recent activity</label>
+      <div class="activity" id="actList">${
+        (state.recent || []).map(a => `
+          <div class="act border-${a.outcome}">
+            <div><div class="who">${a.recipient}</div>
+                 <div class="meta">${a.time} &middot; ${a.channel.toUpperCase()} &middot; ${a.reference}</div></div>
+            <div style="text-align:right">
+              <div>${naira(a.amount)}</div>
+              <span class="chip ${a.outcome}">${a.outcome}</span></div>
+          </div>`).join("") ||
+        `<div class="meta" style="color:var(--muted);font-size:12px">No transfers yet.</div>`
+      }</div>`;
+    // Track keystroke timing on the note input
+    const noteEl = document.getElementById("noteIn");
+    if (noteEl) KSTrack.track(noteEl);
+    document.getElementById("sendBtn").onclick = () => renderSendMoney();
+    document.getElementById("swBtn").onclick = () => {
+      if (isSwitched()) doSwitchBack();
+      else doSwitchDevice();
+    };
+    document.getElementById("logoutBtn").onclick = () => doLogout();
+  }
+
+  // ---- SCREEN: Send Money ----
+  function renderSendMoney(error) {
+    appScreen.innerHTML = `
+      ${error ? `<div class="banner block">${error}</div>` : ""}
+      <div style="font-size:15px;font-weight:700">Send Money</div>
+      <label class="lbl">Amount (NGN)</label>
+      <input class="field" id="amtIn" placeholder="e.g. 25,000" inputmode="decimal">
+      <label class="lbl">Recipient account number (10 digits)</label>
+      <input class="field" id="rcpIn" placeholder="e.g. 1234567890" inputmode="numeric"
+             maxlength="10">
+      <div id="rcpName" class="acct-name"></div>
+      <div id="rcpErr" class="inline-err"></div>
+      <button class="btn" id="sendBtn">Continue</button>
+      <button class="btn muted" id="backBtn" style="font-size:12px">Back to dashboard</button>`;
+    const amtEl = document.getElementById("amtIn");
+    const rcpEl = document.getElementById("rcpIn");
+    const nameEl = document.getElementById("rcpName");
+    const errEl = document.getElementById("rcpErr");
+    // Track keystroke timing on amount and recipient fields
+    KSTrack.track(amtEl);
+    KSTrack.track(rcpEl);
+    // Strip non-digits as typed
+    rcpEl.addEventListener("input", () => {
+      rcpEl.value = rcpEl.value.replace(/\D/g, "").slice(0, 10);
+      // Auto-lookup when exactly 10 digits
+      if (rcpEl.value.length === 10) {
+        nameEl.textContent = "Looking up account name...";
+        errEl.textContent = "";
+        api("/api/bank/lookup-account/", {account_number: rcpEl.value})
+          .then(r => {
+            if (r.display_name) nameEl.textContent = `Account Name: ${r.display_name}`;
+            else nameEl.textContent = "";
+          })
+          .catch(() => { nameEl.textContent = ""; });
+      } else {
+        nameEl.textContent = "";
+      }
+    });
+    document.getElementById("sendBtn").onclick = () => {
+      const amt = amtEl.value.trim();
+      const rcp = rcpEl.value.trim();
+      if (!amt || !rcp) { renderSendMoney("Please enter both amount and recipient."); return; }
+      if (isNaN(Number(amt)) || Number(amt) <= 0) { renderSendMoney("Please enter a valid amount."); return; }
+      if (!/^\d{10}$/.test(rcp)) {
+        errEl.textContent = "Account number must be exactly 10 digits.";
+        return;
+      }
+      errEl.textContent = "";
+      renderPinConfirm({amount: amt, recipient_id: "BNF-" + rcp});
+    };
+    document.getElementById("backBtn").onclick = () => renderDashboard();
+  }
+
+  // ---- SCREEN: PIN Confirmation (before transfer) ----
+  // Uses 4-digit pad for quick transaction confirmation. Compares
+  // against only the FIRST 4 digits of the stored 6-digit login PIN,
+  // as documented in renderPinLogin.
+  let pendingTxn = null;
+  function renderPinConfirm(txn, error) {
+    pendingTxn = txn;
+    appScreen.innerHTML = `
+      ${error ? `<div class="banner block" style="margin-bottom:4px">${error}</div>` : ""}
+      ${pinPadHTML(4, `Confirm transfer of ${naira(txn.amount)}`)}`;
+    initPinPad(4, pin => {
+      const saved = (store.get("sg_pin") || "").slice(0, 4);
+      if (pin === saved) { submitTransfer(pendingTxn); }
+      else { renderPinConfirm(txn, "Incorrect PIN. Try again."); }
+    });
+  }
+
+  // ---- Submit transfer via API ----
   async function submitTransfer(txn, extra = {}) {
-    sendBtn && (sendBtn.disabled = true);
+    appScreen.innerHTML = `<div style="text-align:center;color:var(--muted);padding:40px 0">Processing...</div>`;
+    const keystroke = KSTrack.aggregate();
+    KSTrack.reset();
     try {
       const r = await api("/api/bank/send-money/", {
         user_id: USER.user_id,
         channel: "app",
         ...APPDEV,
         transaction: txn || undefined,
+        keystroke: keystroke || undefined,
         ...extra,
       });
       handleBankResponse(r, txn);
-    } finally { sendBtn && (sendBtn.disabled = false); }
+    } catch (e) {
+      renderResultBlock({customer_message: "Something went wrong. Please try again."});
+    }
   }
 
+  // ---- handleBankResponse ----
   function handleBankResponse(r, txn) {
-    const alertBox = document.getElementById("appAlert");
-    if (!alertBox) return;
-    if (r.verdict === "approve") {
-      alertBox.innerHTML = `
-        <div class="banner approve">Approved${r.released_hold ? " &mdash; verification successful" : ""}</div>
-        <p class="msg">${r.customer_message}${r.reference ? ` Ref: <b>${r.reference}</b>` : ""}</p>`;
-    } else if (r.verdict === "challenge") {
-      alertBox.innerHTML = `
-        <div class="banner challenge">Verification needed</div>
-        <p class="msg">${r.customer_message}</p>
-        <input class="field" id="otpIn" placeholder="Enter code sent to your phone" inputmode="numeric" style="margin-top:8px">
-        <button class="btn secondary" id="otpBtn" style="margin-top:8px">Verify &amp; release</button>`;
-      document.getElementById("otpBtn").onclick = () =>
-        submitTransfer(txn, {challenge_reference: r.reference});
-    } else if (r.verdict === "expired") {
-      alertBox.innerHTML = `<div class="banner challenge">Verification expired</div><p class="msg">${r.customer_message}</p>`;
-    } else {
-      alertBox.innerHTML = `
-        <div class="banner block">Blocked</div>
-        <p class="msg">${r.customer_message}</p>`;
-    }
-    refreshState().then(renderDashboard);
+    if (r.verdict === "approve") renderResultApprove(r, txn);
+    else if (r.verdict === "challenge") renderResultChallenge(r, txn);
+    else if (r.verdict === "expired") renderResultBlock({customer_message: r.customer_message});
+    else renderResultBlock(r);
   }
-  // ============ RIGHT PHONE: USSD *737# state machine ============
+
+  // ---- SCREEN: Approve result ----
+  function renderResultApprove(r, txn) {
+    const ref = r.reference || "N/A";
+    const now = new Date().toLocaleString("en-NG", {dateStyle: "medium", timeStyle: "short"});
+    const bal = Number(r.balance || 0);
+    appScreen.innerHTML = `
+      <div class="result-icon" style="color:var(--approve)">&#10003;</div>
+      <div class="banner approve">${r.released_hold ? "Verification Successful" : "Transfer Approved"}</div>
+      <p class="msg" style="text-align:center">${r.customer_message}</p>
+      <div class="receipt">
+        <div class="receipt-row"><span class="receipt-label">Amount</span><span class="receipt-val">${naira(txn ? txn.amount : 0)}</span></div>
+        <div class="receipt-row"><span class="receipt-label">Recipient</span><span class="receipt-val">${txn ? txn.recipient_id : "-"}</span></div>
+        <div class="receipt-row"><span class="receipt-label">New balance</span><span class="receipt-val">${naira(bal)}</span></div>
+        <div class="receipt-row"><span class="receipt-label">Reference</span><span class="receipt-val">${ref}</span></div>
+        <div class="receipt-row"><span class="receipt-label">Date</span><span class="receipt-val">${now}</span></div>
+      </div>
+      <button class="btn" id="doneBtn">Back to dashboard</button>`;
+    document.getElementById("doneBtn").onclick = () => renderDashboard();
+  }
+
+  // ---- SCREEN: Challenge result ----
+  function renderResultChallenge(r, txn) {
+    appScreen.innerHTML = `
+      <div class="result-icon" style="color:var(--challenge)">&#9888;</div>
+      <div class="banner challenge">Additional Verification Required</div>
+      <p class="msg" style="text-align:center">${r.customer_message}</p>
+      <label class="lbl">Enter the 6-digit code sent to your phone</label>
+      <input class="field" id="otpIn" placeholder="000000" inputmode="numeric" maxlength="6">
+      <button class="btn secondary" id="otpBtn">Verify &amp; release</button>
+      <button class="btn muted" id="cancelBtn" style="font-size:12px">Cancel</button>`;
+    document.getElementById("otpBtn").onclick = async () => {
+      appScreen.innerHTML = `<div style="text-align:center;color:var(--muted);padding:40px 0">Verifying your code...</div>`;
+      const r2 = await api("/api/bank/send-money/", {
+        user_id: USER.user_id, channel: "app", ...APPDEV,
+        challenge_reference: r.reference,
+      });
+      handleBankResponse(r2, txn);
+    };
+    document.getElementById("cancelBtn").onclick = () => renderDashboard();
+  }
+
+  // ---- SCREEN: Block result ----
+  function renderResultBlock(r) {
+    appScreen.innerHTML = `
+      <div class="result-icon" style="color:var(--block)">&#10007;</div>
+      <div class="banner block">Transfer Declined</div>
+      <p class="msg" style="text-align:center">${r.customer_message}</p>
+      <p class="msg" style="text-align:center;color:var(--muted);font-size:12px">
+        If you believe this is an error, please contact our support team for assistance.</p>
+      <button class="btn" id="doneBtn">Back to dashboard</button>`;
+    document.getElementById("doneBtn").onclick = () => renderDashboard();
+  }
+
+  // ==================== USSD *737# STATE MACHINE ====================
   const ussdScreen = document.getElementById("ussdScreen");
   const ussdInput = document.getElementById("ussdInput");
-  let uState = "idle";       // idle|menu|sm_amount|sm_recipient|sm_pin|
-                             // sm_confirm|otp
-  let uCtx = {};             // per-session scratch (amount, recipient, ref)
+  let uState = "idle";
+  let uCtx = {};
 
   function term(text) { ussdScreen.textContent = text; }
 
@@ -378,7 +810,6 @@ _</div>
         else if (v === "0") ussdExit();
         else term(`Invalid option.\n\n` + menuText());
         break;
-
       case "sm_amount": {
         const amt = Number(v);
         if (!amt || amt <= 0) { term(`Amount must be a positive number.\n\nEnter amount:`); break; }
@@ -388,8 +819,6 @@ _</div>
         break;
       }
       case "sm_recipient": {
-        // Numeric-first like real USSD: digits only, mapped to a
-        // beneficiary id server-side shape BNF-<digits>.
         if (!/^\d{3,12}$/.test(v)) { term(`Recipient must be 3-12 digits (an account number), not free text.\n\nEnter recipient account number:`); break; }
         uCtx.recipient = "BNF-" + v;
         uState = "sm_pin";
@@ -398,7 +827,7 @@ _</div>
       }
       case "sm_pin": {
         if (!/^\d{4}$/.test(v)) { term(`PIN must be exactly 4 digits.\n\nEnter your 4-digit PIN:`); break; }
-        uCtx.pin = v;   // demo: accepted but NOT sent anywhere
+        uCtx.pin = v;
         uState = "sm_confirm";
         term(`Confirm transfer:\nNGN ${Number(uCtx.amount).toLocaleString()} to ${uCtx.recipient}\n\n1. Confirm\n2. Cancel`);
         break;
@@ -408,11 +837,8 @@ _</div>
         else if (v === "2") ussdExit();
         else term(`Invalid option.\n\n1. Confirm\n2. Cancel`);
         break;
-
       case "otp": {
         if (!/^\d{4,6}$/.test(v)) { term(`The code is 4-6 digits. Try again:`); break; }
-        // Any code verifies in this demo -- but the RELEASE goes through
-        // the same real pipeline endpoint with the hold reference.
         uCtx.releasing = true;
         const r = await api("/api/bank/send-money/", ussdPayload({challenge_reference: uCtx.ref}));
         showUssdVerdict(r);
@@ -430,8 +856,8 @@ _</div>
     return {
       user_id: USER.user_id,
       channel: "ussd",
-      device_fingerprint: null,          // USSD has no app device concept
-      sim_id: APPDEV.sim_id,             // same physical SIM as the app
+      device_fingerprint: null,
+      sim_id: APPDEV.sim_id,
       ip_or_cell_tower_id: USSD.ip_or_cell_tower_id,
       location_geohash: USSD.location_geohash,
       ...extra,
@@ -469,23 +895,56 @@ _</div>
     if (r.verdict === "approve") {
       term(`Your balance is ${naira(r.balance)}.\n\n0. Exit`);
     } else {
-      // Challenged/blocked login: the customer_message REPLACES the
-      // balance -- never leak account data through friction.
       term(`${r.customer_message}\n\nBalance unavailable right now.\n\n0. Exit`);
     }
   }
 
   function ussdExit() {
     uState = "idle"; uCtx = {};
-    // Identity deliberately persists in localStorage across exits --
-    // like a real SIM, which keeps its identity between sessions.
     term(`Thank you for banking with SessionGuard.\n\nDial *737# to begin again.`);
   }
 
-  // ---------------- boot ----------------
+  // ==================== LOGOUT + INACTIVITY TIMEOUT ====================
+  const SESSION_TIMEOUT_MS = 180000; // 3 minutes of inactivity
+  let _inactivityTimer = null;
+  let _authenticated = false; // true when user is on dashboard/send-money/pin-confirm
+
+  function _onUserActivity() {
+    if (_authenticated) resetInactivityTimer();
+  }
+  function resetInactivityTimer() {
+    clearTimeout(_inactivityTimer);
+    if (_authenticated) {
+      _inactivityTimer = setTimeout(() => {
+        _authenticated = false;
+        renderPinLogin("Your session has expired for your security. Please log in again.");
+      }, SESSION_TIMEOUT_MS);
+    }
+  }
+  // Attach global activity listeners once — they call the guard above.
+  ["click","keydown","input","touchstart"].forEach(evt =>
+    document.addEventListener(evt, _onUserActivity, {passive: true})
+  );
+
+  function doLogout() {
+    _authenticated = false;
+    clearTimeout(_inactivityTimer);
+    renderPinLogin();
+  }
+
+  // ==================== BOOT ====================
   ensureDevices();
-  if (USER) refreshState().then(renderDashboard);
-  else renderAuth();
+  applyDeviceMode();
+  if (isSwitched()) {
+    // Was in switched-device mode last session: show PIN login, not dashboard.
+    renderPinLogin();
+  } else if (USER) {
+    const pin = store.get("sg_pin");
+    if (pin) renderDashboard();
+    else renderPinSetup();
+  } else {
+    renderSignup();
+  }
 </script>
 </body>
 </html>

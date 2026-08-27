@@ -40,7 +40,7 @@ from rest_framework import status as drf_status  # noqa: E402
 from rest_framework.decorators import api_view  # noqa: E402
 from rest_framework.response import Response  # noqa: E402
 
-from core.models import BankUser, Transaction  # noqa: E402
+from core.models import BankUser, KeystrokeDynamics, RecipientDirectory, Transaction  # noqa: E402
 from core.views import run_scoring_pipeline  # noqa: E402
 
 # Holds created by "challenge" verdicts: reference -> context. In-memory
@@ -218,6 +218,21 @@ def bank_send_money(request):
     txn = Transaction.objects.filter(
         session_id=result["session_id"]).first()
 
+    # --- Keystroke dynamics: aggregate timing from the full user journey ----
+    ks = request.data.get("keystroke")
+    if ks and result.get("session_id"):
+        try:
+            from core.models import Session as _S
+            session_obj = _S.objects.get(session_id=result["session_id"])
+            KeystrokeDynamics.objects.create(
+                session=session_obj,
+                avg_hold_time_ms=float(ks.get("avg_hold_time_ms", 0)),
+                avg_interval_ms=float(ks.get("avg_interval_ms", 0)),
+                typing_speed_cpm=float(ks.get("typing_speed_cpm", 0)),
+            )
+        except Exception:
+            pass  # best-effort: don't fail the transfer over analytics
+
     if txn and txn_payload:
         if verdict == "approve":
             ref = _new_reference()
@@ -253,6 +268,51 @@ def bank_send_money(request):
         result["balance"] = str(user.balance)  # balance-check session
 
     return Response(result, status=drf_status.HTTP_200_OK)
+
+
+# --- Nigerian name pool for realistic account-name lookup ---
+_NG_FIRST = [
+    "Adaeze", "Chidinma", "Emeka", "Fatima", "Ibrahim",
+    "Kemi", "Ngozi", "Obinna", "Olumide", "Sade",
+    "Tunde", "Uche", "Yemi", "Chukwuemeka", "Amina",
+    "Babatunde", "Funke", "Grace", "Hauwa", "Ifeanyi",
+]
+_NG_LAST = [
+    "Nwosu", "Okonkwo", "Okafor", "Adeyemi", "Bello",
+    "Ogundimu", "Chukwu", "Abubakar", "Eze", "Onwueme",
+    "Oladipo", "Nnamdi", "Bankole", "Mohammed", "Akinwale",
+    "Oyewole", "Igwe", "Suleiman", "Adebanjo", "Obi",
+]
+
+
+@api_view(["POST"])
+def bank_lookup_account(request):
+    """DEMO: Nigerian banking 'name enquiry' -- given a 10-digit NUBAN
+    account number, return the account holder's display name.
+
+    If the account is already in RecipientDirectory, return the stored
+    name (consistent across transfers). Otherwise, generate a plausible
+    random Nigerian full name, persist it, and return it.
+    """
+    acct = (request.data.get("account_number") or "").strip()
+    if not acct.isdigit() or len(acct) != 10:
+        return Response(
+            {"error": "account_number must be exactly 10 digits."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
+    import random as _rng
+    entry, _ = RecipientDirectory.objects.get_or_create(
+        account_number=acct,
+        defaults={
+            "display_name": (
+                f"{_rng.choice(_NG_FIRST)} {_rng.choice(_NG_LAST)}"
+            ).upper(),
+        },
+    )
+    return Response({
+        "account_number": acct,
+        "display_name": entry.display_name,
+    })
 
 
 class BankAppView(TemplateView):
