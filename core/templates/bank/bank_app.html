@@ -511,12 +511,29 @@ _</div>
     const el = document.getElementById("appDevice");
     if (el) el.classList.toggle("device-b", isSwitched());
   }
+  // Regenerate ONLY the device_fingerprint (documented design): switching
+  // represents logging in on a NEW, unfamiliar phone, so a fresh fingerprint
+  // is emitted -- but sim / tower / location are intentionally left intact
+  // (a phone number + network context that genuinely carry across). Revealing
+  // a fingerprint the feature engine has never seen for this user fires the
+  // device_change_alone signal at scoring time.
+  function switchToNewFingerprint() {
+    ensureDevices();
+    if (!store.get("sg_original_fingerprint")) {
+      // Remember the ORIGINAL fingerprint (the owner's own device) once, so
+      // "Switch back" can restore it instead of inventing a third device.
+      store.set("sg_original_fingerprint", APPDEV.device_fingerprint);
+    }
+    APPDEV.device_fingerprint = randHex(64);
+    store.set("sg_app_device", APPDEV);
+  }
+
   function doSwitchDevice() {
-    // OPTION A: behave like a full logout (consistent with doLogout and
-    // session expiry). Swap the device identity first, then clear the
-    // user and land on the phone-number Welcome screen. Re-entering the
-    // phone number + PIN authenticates the SAME account, now scored
-    // against the NEW (unfamiliar) switched-device identity.
+    // Swap the device identity first (regenerate ONLY the fingerprint -- the
+    // documented "new phone" simulation), then clear the user and land on the
+    // Welcome screen. Re-entering the phone number + PIN authenticates the
+    // SAME account, now scored against the NEW (unfamiliar) fingerprint.
+    switchToNewFingerprint();
     store.set("sg_switched", true);
     localStorage.removeItem("sg_user");
     USER = null;
@@ -524,11 +541,19 @@ _</div>
     renderWelcome();
   }
   function doSwitchBack() {
-    // Swap the device identity BACK to the original, then fully log out
-    // to the Welcome screen (consistent with doSwitchDevice and doLogout).
-    // Re-entering the phone number + PIN proves it's really the account
-    // owner returning, before dashboard access is restored -- and all
-    // subsequent API calls then score against the ORIGINAL identity.
+    // Restore the ORIGINAL fingerprint (the owner's own device), then fully
+    // log out to the Welcome screen (consistent with doSwitchDevice and
+    // doLogout). Re-entering the phone number + PIN proves it's really the
+    // account owner returning, and subsequent API calls again score against
+    // the known/original identity -- which is back in this user's history,
+    // so no device-change signal fires.
+    ensureDevices();
+    const original = store.get("sg_original_fingerprint");
+    if (original) {
+      APPDEV.device_fingerprint = original;
+      store.set("sg_app_device", APPDEV);
+      localStorage.removeItem("sg_original_fingerprint");
+    }
     localStorage.removeItem("sg_switched");
     localStorage.removeItem("sg_user");
     USER = null;

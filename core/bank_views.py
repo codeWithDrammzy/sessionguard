@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
 from decimal import Decimal  # noqa: E402
 
-from django.db.models import F  # noqa: E402
+from django.db import transaction  # noqa: E402
 from django.utils import timezone  # noqa: E402
 from django.views.generic import TemplateView  # noqa: E402
 from rest_framework import status as drf_status  # noqa: E402
@@ -176,9 +176,29 @@ def bank_send_money(request):
         CHALLENGE_HOLDS.pop(hold_ref, None)
         txn = Transaction.objects.filter(pk=hold["transaction_pk"]).first()
         amount = Decimal(hold["amount"])
-        BankUser.objects.filter(pk=user.pk).update(
-            balance=F("balance") - amount)
-        user.refresh_from_db()
+        # Re-validate funds under a row lock before releasing the held
+        # transfer, guarding the same read-then-deduct race.
+        try:
+            with transaction.atomic():
+                locked = (BankUser.objects.select_for_update()
+                          .get(pk=user.pk))
+                if amount > locked.balance:
+                    if txn:
+                        txn.outcome = Transaction.OUTCOME_BLOCK
+                        txn.save()
+                    return Response({
+                        "verdict": "block",
+                        "customer_message":
+                            f"You don't have enough funds for this transfer. "
+                            f"Your available balance is NGN "
+                            f"{locked.balance:,.2f}.",
+                    }, status=drf_status.HTTP_200_OK)
+                locked.balance = locked.balance - amount
+                locked.save()
+                user.refresh_from_db()
+        except BankUser.DoesNotExist:
+            return Response({"error": "Unknown account."},
+                            status=drf_status.HTTP_404_NOT_FOUND)
         if txn:
             txn.outcome = Transaction.OUTCOME_APPROVE
             txn.save()
@@ -214,6 +234,31 @@ def bank_send_money(request):
             "narration": txn_payload.get("narration", ""),
         }
 
+    # ---- FUNDS AVAILABILITY CHECK (hard business rule, BEFORE scoring) ----
+    # A transfer must NEVER be approved when the amount exceeds the sender's
+    # available balance, regardless of the fraud score. This is an accounting
+    # question, not a fraud question, so it short-circuits the whole risk
+    # pipeline. (The balance is re-validated again under a row lock at commit
+    # time below to close any read-then-deduct race between requests.)
+    if txn_payload:
+        try:
+            amount = Decimal(str(txn_payload["amount"]))
+        except Exception:
+            amount = Decimal("0")
+        if amount <= 0:
+            return Response({
+                "verdict": "block",
+                "customer_message": "The transfer amount must be greater than "
+                                    "zero. Please try again.",
+            }, status=drf_status.HTTP_200_OK)
+        if amount > user.balance:
+            return Response({
+                "verdict": "block",
+                "customer_message":
+                    f"You don't have enough funds for this transfer. Your "
+                    f"available balance is NGN {user.balance:,.2f}.",
+            }, status=drf_status.HTTP_200_OK)
+
     result = run_scoring_pipeline(user, data)
     verdict = result["verdict"]
     txn = Transaction.objects.filter(
@@ -239,12 +284,35 @@ def bank_send_money(request):
             ref = _new_reference()
             txn.reference = ref
             txn.outcome = Transaction.OUTCOME_APPROVE
-            txn.save()
-            BankUser.objects.filter(pk=user.pk).update(
-                balance=F("balance") - Decimal(str(txn.amount)))
+            # Deduct under a row lock and RE-VALIDATE the balance inside the
+            # lock, so a concurrent request that also passed the pre-scoring
+            # check cannot drive the ledger below zero (read-then-deduct
+            # race). If funds ran out in between, the transfer is downgraded
+            # to block and the balance is never touched.
+            try:
+                avec = Decimal(str(txn.amount))
+                with transaction.atomic():
+                    locked = (BankUser.objects.select_for_update()
+                              .get(pk=user.pk))
+                    if avec > locked.balance:
+                        txn.outcome = Transaction.OUTCOME_BLOCK
+                        txn.save()
+                        result["verdict"] = "block"
+                        result["customer_message"] = (
+                            f"You don't have enough funds for this transfer. "
+                            f"Your available balance is NGN "
+                            f"{locked.balance:,.2f}.")
+                        result["reference"] = ref
+                    else:
+                        locked.balance = locked.balance - avec
+                        locked.save()
+                        txn.save()
+                        result["reference"] = ref
+                        result["balance"] = str(locked.balance)
+            except BankUser.DoesNotExist:
+                return Response({"error": "Unknown account."},
+                                status=drf_status.HTTP_404_NOT_FOUND)
             user.refresh_from_db()
-            result["reference"] = ref
-            result["balance"] = str(user.balance)
         elif verdict == "challenge":
             ref = _new_reference()
             txn.reference = ref
