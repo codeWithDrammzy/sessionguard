@@ -38,6 +38,37 @@ class TransactionEventSerializer(serializers.Serializer):
     )
 
 
+class KeystrokeEventSerializer(serializers.Serializer):
+    """Optional aggregated keystroke-evidence payload (app sessions).
+
+    Collected across the FULL app journey -- from login-PIN entry through
+    transfer confirm -- so a transaction is judged with the typing rhythm
+    that surrounded it, including any wrong-PIN attempts at login.
+    """
+
+    avg_hold_time_ms = serializers.FloatField(
+        required=False,
+        min_value=0,
+        help_text="Mean key hold duration in milliseconds.",
+    )
+    avg_interval_ms = serializers.FloatField(
+        required=False,
+        min_value=0,
+        help_text="Mean inter-key interval in milliseconds.",
+    )
+    typing_speed_cpm = serializers.FloatField(
+        required=False,
+        min_value=0,
+        help_text="Typing speed in characters per minute.",
+    )
+    login_pin_failures = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        help_text="Wrong login-PIN attempts before the successful login.",
+    )
+
+
 class SessionEventSerializer(serializers.Serializer):
     """One login/session event arriving for real-time scoring."""
 
@@ -86,6 +117,11 @@ class SessionEventSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
         help_text="Optional ISO event time; defaults to server 'now'.",
+    )
+    keystroke = KeystrokeEventSerializer(
+        required=False,
+        allow_null=True,
+        help_text="Optional aggregated keystroke evidence (app only).",
     )
 
     def validate(self, attrs):

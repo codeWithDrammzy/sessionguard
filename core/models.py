@@ -304,8 +304,17 @@ class Transaction(models.Model):
 
     # When the transfer was attempted. Used for velocity calculations
     # (transfers per 5-minute window) and burst detection.
+    # NOTE: a PLAIN field with default=now, NOT auto_now_add: the dataset
+    # generators must be able to write a transaction's true timestamp (its
+    # session's time). auto_now_add made bulk_create stamp every row of a
+    # batch with ONE uniform clock value, silently detaching every transfer
+    # from its session time -- which corrupted the gap and the anchor-based
+    # timing logic in the attack injector (negative gaps, impossible
+    # travel anchors against the wrong moment). The API path that omits the
+    # field still gets server-now via the default, so behaviour there is
+    # unchanged.
     timestamp = models.DateTimeField(
-        auto_now_add=True,
+        default=timezone.now,
         help_text="When the transfer was attempted.",
     )
 
@@ -503,6 +512,22 @@ class BehavioralFeatures(models.Model):
         ),
     )
 
+    # Impossible-travel signal: the session's location is so far from the
+    # user's IMMEDIATELY PRIOR session that the implied travel speed exceeds
+    # anything physically possible (generously: faster than commercial air
+    # travel, > 900 km/h). Strong standalone fraud evidence -- an attacker
+    # using stolen credentials from a distant city minutes after the victim
+    # logged in. False when there is no prior session, elapsed time is
+    # effectively zero, or the distance is small (see feature engine).
+    impossible_travel_flag = models.BooleanField(
+        default=False,
+        help_text=(
+            "True when the implied speed from the immediately prior session "
+            "to this one exceeds physically possible travel (>900 km/h) "
+            "across a genuinely long distance."
+        ),
+    )
+
     # When this feature vector was computed (audit trail).
     computed_at = models.DateTimeField(
         auto_now_add=True,
@@ -553,6 +578,16 @@ class KeystrokeDynamics(models.Model):
     )
     typing_speed_cpm = models.FloatField(
         help_text="Typing speed in characters per minute.",
+    )
+    login_pin_failures = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Number of incorrect login-PIN attempts before the successful "
+            "login in this session (login-phase behavioural signal collected "
+            "alongside the timing aggregate). NULL for dataset rows and for "
+            "sessions that carried no login-phase data."
+        ),
     )
     recorded_at = models.DateTimeField(auto_now_add=True)
 

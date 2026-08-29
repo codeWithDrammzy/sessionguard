@@ -50,6 +50,20 @@ CHALLENGE_HOLDS = OrderedDict()
 HOLD_LIMIT = 200
 
 
+def phone_to_account_number(phone_number) -> str:
+    """Derive a customer's display/look-up account number from their stored
+    phone number by stripping the single leading zero.
+
+    A Nigerian mobile number is stored WITH its leading zero at signup
+    (e.g. "08012345678"); the account number customers see and transfer to
+    is that same number minus the zero ("8012345678"). If the stored value
+    already lacks a leading zero it is returned unchanged -- never
+    double-stripped or mangled.
+    """
+    phone = (phone_number or "").strip()
+    return phone[1:] if phone.startswith("0") else phone
+
+
 def _new_reference() -> str:
     return "SG-" + uuid.uuid4().hex[:8].upper()
 
@@ -106,6 +120,7 @@ def bank_signup(request):
     return Response({
         "user_id": str(user.user_id),
         "first_name": user.first_name,
+        "phone_number": user.phone_number,
         "balance": str(user.balance),
     }, status=drf_status.HTTP_201_CREATED)
 
@@ -123,6 +138,7 @@ def bank_login(request):
     return Response({
         "user_id": str(user.user_id),
         "first_name": user.first_name,
+        "phone_number": user.phone_number,
         "balance": str(user.balance),
     })
 
@@ -138,6 +154,7 @@ def bank_state(request, user_id):
     return Response({
         "user_id": str(user.user_id),
         "first_name": user.first_name,
+        "phone_number": user.phone_number,
         "balance": str(user.balance),
         "recent": _recent_activity(user),
     })
@@ -234,6 +251,13 @@ def bank_send_money(request):
             "narration": txn_payload.get("narration", ""),
         }
 
+    # Forward the aggregated keystroke metrics collected from the FULL user
+    # journey (login PIN entry through confirm) so the shared pipeline can
+    # persist them BEFORE scoring -- keystroke evidence must be in the
+    # feature computation for THIS transaction, not bolted on afterwards.
+    if request.data.get("keystroke"):
+        data["keystroke"] = request.data["keystroke"]
+
     # ---- FUNDS AVAILABILITY CHECK (hard business rule, BEFORE scoring) ----
     # A transfer must NEVER be approved when the amount exceeds the sender's
     # available balance, regardless of the fraud score. This is an accounting
@@ -263,21 +287,6 @@ def bank_send_money(request):
     verdict = result["verdict"]
     txn = Transaction.objects.filter(
         session_id=result["session_id"]).first()
-
-    # --- Keystroke dynamics: aggregate timing from the full user journey ----
-    ks = request.data.get("keystroke")
-    if ks and result.get("session_id"):
-        try:
-            from core.models import Session as _S
-            session_obj = _S.objects.get(session_id=result["session_id"])
-            KeystrokeDynamics.objects.create(
-                session=session_obj,
-                avg_hold_time_ms=float(ks.get("avg_hold_time_ms", 0)),
-                avg_interval_ms=float(ks.get("avg_interval_ms", 0)),
-                typing_speed_cpm=float(ks.get("typing_speed_cpm", 0)),
-            )
-        except Exception:
-            pass  # best-effort: don't fail the transfer over analytics
 
     if txn and txn_payload:
         if verdict == "approve":
@@ -369,6 +378,20 @@ def bank_lookup_account(request):
             {"error": "account_number must be exactly 10 digits."},
             status=drf_status.HTTP_400_BAD_REQUEST,
         )
+    # Internal SessionGuard customer? Their account number IS their phone
+    # number with the leading zero stripped, so reverse the transformation
+    # and match against a real customer. (Exclude the blank default the
+    # seeded dataset predates, exactly like the signup uniqueness check.)
+    internal = (BankUser.objects
+                .filter(phone_number="0" + acct)
+                .exclude(phone_number="")
+                .first())
+    if internal is not None:
+        return Response({
+            "account_number": acct,
+            "display_name": internal.first_name,
+            "is_internal": True,
+        })
     import random as _rng
     entry, _ = RecipientDirectory.objects.get_or_create(
         account_number=acct,
@@ -381,6 +404,7 @@ def bank_lookup_account(request):
     return Response({
         "account_number": acct,
         "display_name": entry.display_name,
+        "is_internal": False,
     })
 
 

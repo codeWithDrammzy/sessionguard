@@ -75,6 +75,7 @@ FEATURE_COLUMNS = [
     "sim_change_flag",
     "location_change_flag",
     "combined_device_location_flag",
+    "impossible_travel_flag",       # strong standalone: impossibly far, too fast
     "new_recipient_flag",
     "velocity_count_5min",
     "menu_timing_deviation_score",  # null -> 0.0 (app has no USSD timing)

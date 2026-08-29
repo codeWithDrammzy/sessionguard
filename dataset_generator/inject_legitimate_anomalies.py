@@ -268,7 +268,15 @@ def build_simswap_session(rng, profile, now):
 
 def main():
     rng = random.Random(SEED)
+    # Same postdating anchor as inject_attacks.py: anomaly sessions must
+    # never predate the latest baseline row, even when the baseline snapshot
+    # extends ahead of the runtime wall clock.
+    latest_baseline = Session.objects.order_by("-timestamp").values_list(
+        "timestamp", flat=True
+    ).first()
     now = timezone.now()
+    if latest_baseline is not None and latest_baseline > now:
+        now = latest_baseline
 
     stale = Session.objects.filter(fraud_label__is_legitimate_anomaly=True)
     if stale.count():

@@ -87,6 +87,12 @@ CONTEXT_NORMAL_THRESHOLDS = {
     # We established elsewhere (WEIGHTS["new_recipient_alone"]=3) that paying
     # someone new alone is routine life; counting it here would erode the
     # override for exactly the harmless cases it exists to protect.
+    #
+    # NOTE: impossible travel IS part of normalcy scoring -- a leap to a
+    # city that could not be physically reached since the last session is
+    # the opposite of an otherwise-ordinary session, so the block->challenge
+    # hardware override must never soften it.
+    "impossible_travel_blocks": True,
 }
 
 
@@ -110,6 +116,10 @@ def is_context_normal(features):
     if features.hour_deviation_score > CONTEXT_NORMAL_THRESHOLDS[
         "hour_deviation_max"
     ]:
+        return False
+    if CONTEXT_NORMAL_THRESHOLDS["impossible_travel_blocks"] and (
+        features.impossible_travel_flag
+    ):
         return False
     return True
 

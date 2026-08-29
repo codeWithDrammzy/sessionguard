@@ -1,0 +1,24 @@
+# Python bytecode / cache artifacts -- never track these.
+__pycache__/
+*.py[cod]
+
+# Virtual environments and tool caches.
+.venv/
+venv/
+env/
+.python-version
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editor / OS noise.
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs and scratch output.
+*.log
+scratch/

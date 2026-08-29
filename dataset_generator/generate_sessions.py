@@ -9,11 +9,15 @@ the reference against which future "scoring-time" sessions and injected
 attack scenarios will look anomalous.
 
 ETHICS / DATA PROVENANCE
-------------------------
-Entirely synthetic. No real subscribers, IMSIs, IPs, towers or locations.
-Cell-tower IDs, IPs and geohashes are random tokens (geohashes drawn from
-the valid geohash alphabet, IPs biased toward AFRINIC-looking ranges purely
-for cosmetic realism).
+-----------------------
+Entirely synthetic. No real subscribers, IMSIs, IPs, towers or addresses.
+Cell-tower IDs and IPs are random tokens (IPs biased toward AFRINIC-looking
+ranges purely for cosmetic realism). Geohashes ENCODE the coordinates of
+real Nigerian city centres (home/work drawn a few km apart within ONE
+assigned city), which is what makes the impossible-travel signal meaningful
+downstream -- but no residential address is ever represented: the cells are
+1-2 km wide around a city point, and a latitude/longitude jitter is no
+address.
 
 REPRODUCIBILITY
 ---------------
@@ -59,6 +63,7 @@ django.setup()
 
 from django.utils import timezone  # noqa: E402
 
+from core.geohash_util import NIGERIAN_CITIES, geohash_encode  # noqa: E402
 from core.models import (  # noqa: E402
     BankUser,
     BehavioralFeatures,
@@ -71,7 +76,6 @@ SEED = 43  # independent stream from generate_users.py's seed 42
 HISTORY_WINDOW_DAYS = 21  # three weeks of baseline behaviour
 
 _HEX = "0123456789abcdef"
-_GEOHASH_ALPHABET = "0123456789bcdefghjkmnpqrstuvwxyz"  # official geohash set
 _RECIPIENT_ALPHABET = string.ascii_uppercase + string.digits
 
 
@@ -103,7 +107,15 @@ class UserContext:
     def __init__(self, rng, user):
         self.user = user
         self.sim_id = _hex_string(rng, 64)
-        self.locations = [self._make_location(rng), self._make_location(rng)]
+        # Home AND work are anchored to the user's ONE assigned city (drawn
+        # once). Two locations a few km apart inside the same city model
+        # routine commuting; the gap stays far below the impossible-travel
+        # distance floor, so routine home/work switching can never trip it.
+        city = rng.choice(NIGERIAN_CITIES)
+        self.locations = [
+            self._make_location(rng, city),
+            self._make_location(rng, city),
+        ]
 
         self.last_transaction_dt = None  # for velocity-style gap computation
 
@@ -114,7 +126,11 @@ class UserContext:
         self.keystroke_interval_ms = rng.uniform(100.0, 300.0)  # inter-key gap
 
     @staticmethod
-    def _make_location(rng):
+    def _make_location(rng, city):
+        # Jitter home/work around the city centre by ~5km (neighbourhood
+        # scale), encoded into a precision-6 geohash cell.
+        lat = city[1] + rng.uniform(-0.05, 0.05)
+        lon = city[2] + rng.uniform(-0.05, 0.05)
         return {
             # App traffic shows an IP; USSD shows a tower ID. Both are kept
             # per location so channel choice doesn't change geography.
@@ -125,7 +141,7 @@ class UserContext:
                 rng.randint(1, 254),
             ),
             "tower": "TWR-" + _hex_string(rng, 8),
-            "geohash": "".join(rng.choices(_GEOHASH_ALPHABET, k=6)),
+            "geohash": geohash_encode(lat, lon),
         }
 
 

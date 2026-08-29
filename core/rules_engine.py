@@ -60,6 +60,11 @@ from core.models import BehavioralFeatures, FraudLabel  # noqa: E402
 WEIGHTS = {
     # Strongest single signal: credential context AND location moved together.
     "combined_device_location": 45,
+    # Strongest STANDALONE signal: physically impossible travel from the
+    # immediately-prior session (e.g. Lagos -> Kaduna eleven minutes later).
+    # Not subsumed by the device/location cluster -- it does not require the
+    # attacker to have changed device or SIM, only to be impossibly far.
+    "impossible_travel": 50,
     # Weak evidence alone: new phone, shared tablet, routine SIM upgrade...
     "device_change_alone": 10,
     "sim_change_alone": 10,
@@ -124,6 +129,10 @@ def score_session(features):
             add("sim_change_alone", WEIGHTS["sim_change_alone"])
         if features.location_change_flag:
             add("location_change_alone", WEIGHTS["location_change_alone"])
+
+    # Standalone impossible-travel: independent of any device/SIM change.
+    if features.impossible_travel_flag:
+        add("impossible_travel", WEIGHTS["impossible_travel"])
 
     # Scaled behavioural signals.
     if features.hour_deviation_score:

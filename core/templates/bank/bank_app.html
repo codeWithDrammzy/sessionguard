@@ -433,12 +433,32 @@ _</div>
     return `**** **** ** ${tail}`;
   }
 
+  // The customer's account number IS their phone number with the single
+  // leading zero dropped ("08012345678" -> "8012345678"). Mirrors the
+  // server-side phone_to_account_number transform used for lookups.
+  function phone_to_account_number(phone) {
+    phone = (phone || "").trim();
+    return phone.startsWith("0") ? phone.slice(1) : phone;
+  }
+
   // ==================== KEYSTROKE TRACKER ====================
   // Captures hold-time (keydown->keyup) and inter-key interval across
-  // ANY tracked input field. On transfer submit, aggregate() produces
+  // ANY tracked input field, PLUS simple taps on the PIN grid (login-PIN
+  // entry and transfer-confirm). On transfer submit, aggregate() produces
   // combined avg_hold_time_ms / avg_interval_ms / typing_speed_cpm.
+  // Because the counter is started at the app-session boundary (welcome /
+  // signup / timeout re-login) and NOT reset on dashboard render, the
+  // metrics cover the FULL user journey: login-PIN taps, transfer-form
+  // typing, and the confirm-PIN taps that authorise the very transaction
+  // being scored.
+  let _loginFailures = 0; // wrong login-PIN attempts this app session
+  function startKeystrokeSession() {
+    KSTrack.reset();
+    _loginFailures = 0;
+  }
+
   const KSTrack = {
-    _events: [],        // [{t, type:"down"|"up"}] chronologically ordered
+    _events: [],        // [{t, type:"down"|"up", field}] chronologically ordered
     _lastKeyTime: null,  // timestamp of last keydown (for interval calc)
     _lastField: null,    // which field we're currently tracking
 
@@ -452,6 +472,19 @@ _</div>
       el.addEventListener("keyup", e => {
         if (e.key.length > 1 && e.key !== "Backspace" && e.key !== "Delete") return;
         this._events.push({t: performance.now(), type: "up", field: el.id || "?"});
+      });
+    },
+
+    // PIN grids are tap-based (no physical keyboard), so capture pointer
+    // presses as synthetic key events in the same rhythm stream.
+    trackTap(el) {
+      if (el._ksTapTracked) return;
+      el._ksTapTracked = true;
+      el.addEventListener("pointerdown", () => {
+        this._events.push({t: performance.now(), type: "down", field: "pin"});
+      });
+      el.addEventListener("pointerup", () => {
+        this._events.push({t: performance.now(), type: "up", field: "pin"});
       });
     },
 
@@ -586,6 +619,9 @@ _</div>
       if (k === "del") return `<div class="pin-key del" data-k="del">&larr;</div>`;
       return `<div class="pin-key" data-k="${k}">${k}</div>`;
     }).join("");
+    // Every PIN pad (login, setup steps, transfer confirm) feeds the
+    // keystroke rhythm stream -- fixed on-pointer presses, no keyboard.
+    KSTrack.trackTap(grid);
     grid.onclick = e => {
       const btn = e.target.closest("[data-k]");
       if (!btn) return;
@@ -602,6 +638,7 @@ _</div>
   function renderWelcome(error) {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
+    startKeystrokeSession();
     appScreen.innerHTML = `
       <div style="text-align:center;margin:10px 0 6px">
         <div class="logo-mark" style="width:52px;height:52px;border-radius:14px;font-size:22px;margin:0 auto 10px">SG</div>
@@ -646,6 +683,7 @@ _</div>
   function renderSignup(error) {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
+    startKeystrokeSession();
     appScreen.innerHTML = `
       ${error ? `<div class="banner block">${error}</div>` : ""}
       <div style="font-size:16px;font-weight:700;text-align:center">Create your account</div>
@@ -675,6 +713,7 @@ _</div>
   function renderPinSetup() {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
+    startKeystrokeSession();
     appScreen.innerHTML = `
       <div style="text-align:center;margin-top:6px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Step 1 of 2</div>
@@ -738,7 +777,12 @@ _</div>
         }
         renderDashboard();
       }
-      else { renderPinLogin("Incorrect PIN. Try again."); }
+      else {
+        // Count the wrong-PIN attempt: it is a genuine login-phase
+        // behavioural signal carried along with the keystroke aggregate.
+        _loginFailures += 1;
+        renderPinLogin("Incorrect PIN. Try again.");
+      }
     });
     if (isSwitched()) {
       document.getElementById("switchBack").onclick = () => doSwitchBack();
@@ -767,16 +811,26 @@ _</div>
       renderSignup();
       return;
     }
-    KSTrack.reset();
+    // NOTE: no KSTrack.reset() here. The keystroke aggregate is intentionally
+    // continuous across the whole app session -- from the login-PIN taps at
+    // the start through transfer-form typing to the confirm-PIN taps on the
+    // same transaction -- so the scoring pipeline sees the FULL journey.
     const bal = Number(state.balance || 0);
     const switched = isSwitched();
     _authenticated = true;
     resetInactivityTimer();
+    const derivedAcct = phone_to_account_number(state.phone_number);
     appScreen.innerHTML = `
       <div class="dash-header">
         <div>
           <div style="font-size:14px;font-weight:700">Hi, ${state.first_name}</div>
-          <div class="acct-masked">${maskedAccount(state.user_id)}</div>
+          <div class="acct-masked">
+            <span id="acctNumText">Account ${maskedAccount(derivedAcct)}</span>
+            <button type="button" class="logout-link" id="acctShowBtn"
+                    style="letter-spacing:0;font-weight:600">
+              Show
+            </button>
+          </div>
         </div>
         <button class="logout-link" id="logoutBtn">Log out</button>
       </div>
@@ -811,6 +865,18 @@ _</div>
       else doSwitchDevice();
     };
     document.getElementById("logoutBtn").onclick = () => doLogout();
+    // Show/hide toggle for the derived account number (same masked pattern
+    // as identifiers elsewhere; the button reveals the full 10 digits).
+    const acctText = document.getElementById("acctNumText");
+    const acctBtn = document.getElementById("acctShowBtn");
+    let acctShown = false;
+    acctBtn.onclick = () => {
+      acctShown = !acctShown;
+      acctText.textContent = acctShown
+        ? `Account ${derivedAcct}`
+        : `Account ${maskedAccount(derivedAcct)}`;
+      acctBtn.textContent = acctShown ? "Hide" : "Show";
+    };
   }
 
   // ---- SCREEN: Send Money ----
@@ -818,7 +884,7 @@ _</div>
     appScreen.innerHTML = `
       ${error ? `<div class="banner block">${error}</div>` : ""}
       <div style="font-size:15px;font-weight:700">Send Money</div>
-      <label class="lbl">Recipient account number (10 digits)</label>
+      <label class="lbl">Recipient's account number (their 10-digit phone, no leading 0)</label>
       <input class="field" id="rcpIn" placeholder="e.g. 1234567890" inputmode="numeric"
              maxlength="10">
       <div id="rcpName" class="acct-name"></div>
@@ -897,7 +963,9 @@ _</div>
   async function submitTransfer(txn, extra = {}) {
     appScreen.innerHTML = `<div style="text-align:center;color:var(--muted);padding:40px 0">Processing...</div>`;
     const keystroke = KSTrack.aggregate();
+    if (keystroke) keystroke.login_pin_failures = _loginFailures;
     KSTrack.reset();
+    _loginFailures = 0;
     try {
       const r = await api("/api/bank/send-money/", {
         user_id: USER.user_id,
@@ -1148,6 +1216,9 @@ _</div>
       _inactivityTimer = setTimeout(() => {
         _authenticated = false;
         USER = null;
+        // Fresh keystroke session: the re-login that follows starts a new
+        // tracking window (reset tap events + wrong-PIN counter).
+        startKeystrokeSession();
         renderPinLogin("Your session has expired for your security. Please log in again.");
       }, SESSION_TIMEOUT_MS);
     }

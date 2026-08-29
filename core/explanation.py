@@ -59,6 +59,9 @@ REASON_TEMPLATES = {
     "combined_device_location":
         "it came from a device and location we haven't seen with your "
         "account before",
+    "impossible_travel":
+        "it came from a location that couldn't realistically be reached "
+        "this soon after your last session",
     "device_change_alone":
         "it came from a device we don't recognize",
     "sim_change_alone":

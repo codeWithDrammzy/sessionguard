@@ -68,6 +68,7 @@ if __name__ == "__main__":
 
     django.setup()
 
+from core.geohash_util import geohash_decode, haversine_km  # noqa: E402
 from core.models import (  # noqa: E402
     BehavioralFeatures,
     FraudLabel,
@@ -81,6 +82,16 @@ VELOCITY_WINDOW = timedelta(minutes=5)
 MIN_USSD_BASELINE_SESSIONS = 3  # below this: not enough history to judge
 MIN_KEYSTROKE_BASELINE_SESSIONS = 5  # below this: not enough keystroke history
 HOUR_CAP_MINUTES = 360  # >=6h outside any window => hour_deviation 1.0
+
+# --- Impossible travel -------------------------------------------------------
+# Generous threshold: faster than commercial air travel. A person simply
+# cannot be >= this far from their immediately-prior session this soon.
+# The distance FLOOR stops ordinary same-city movement (home->work, a
+# suburb, a changed cell tower) from ever counting -- "impossible travel"
+# only ever means a genuinely long jump, so the flag stays a strong,
+# hard-to-explain-away signal rather than noisy commuting data.
+IMPOSSIBLE_TRAVEL_SPEED_KMH = 900.0
+MIN_IMPOSSIBLE_TRAVEL_DISTANCE_KM = 100.0
 
 
 class UserHistory:
@@ -104,6 +115,9 @@ class UserHistory:
         self.keystroke_cpm = []
         # Timestamps kept for velocity; pruned from the left as time moves.
         self.recent_timestamps = deque()
+        # The immediately-prior session (any channel) -- the anchor point for
+        # impossible-travel judgement. Strictly causal: set only in observe().
+        self.last_session = None
 
     @property
     def has_prior(self):
@@ -132,6 +146,7 @@ class UserHistory:
             self.keystroke_intervals.append(ks.avg_interval_ms)
             self.keystroke_cpm.append(ks.typing_speed_cpm)
         self.recent_timestamps.append(session.timestamp)
+        self.last_session = session
 
 
 def _minute_distance_circular(a, b):
@@ -221,6 +236,29 @@ def compute_features(session, history=None):
         history.recent_timestamps.popleft()
     velocity = len(history.recent_timestamps)  # others in (t-5m, t]
 
+    # --- Impossible travel --------------------------------------------------
+    # Distance this session from the user's IMMEDIATELY prior session,
+    # divided by the elapsed time. A result faster than anything physically
+    # possible (commercial flight speeds) across a genuinely long distance
+    # is strong standalone fraud evidence: the credentials are being used
+    # from somewhere the rightful owner cannot be. Requires a valid prior
+    # geohash AND valid elapsed time; any missing piece => False (never
+    # flag what we cannot judge).
+    impossible_travel = False
+    prev_session = history.last_session
+    if prev_session is not None:
+        current_loc = geohash_decode(session.location_geohash)
+        prior_loc = geohash_decode(prev_session.location_geohash)
+        if current_loc is not None and prior_loc is not None:
+            delta_hours = (
+                session.timestamp - prev_session.timestamp
+            ).total_seconds() / 3600.0
+            if delta_hours > 0:
+                distance_km = haversine_km(prior_loc, current_loc)
+                if distance_km >= MIN_IMPOSSIBLE_TRAVEL_DISTANCE_KM:
+                    speed_kmh = distance_km / delta_hours
+                    impossible_travel = speed_kmh > IMPOSSIBLE_TRAVEL_SPEED_KMH
+
     # --- Amount deviation: worst offending transaction in the session -------
     amount_score = None
     if amounts:
@@ -289,6 +327,7 @@ def compute_features(session, history=None):
         velocity_count_5min=velocity,
         menu_timing_deviation_score=menu_score,
         keystroke_deviation_score=keystroke_score,
+        impossible_travel_flag=impossible_travel,
     )
     # Delegate to the model's single-source-of-truth resolver -- identical
     # rule to BehavioralFeatures.save(); NOT a re-implementation.
@@ -399,6 +438,7 @@ def print_validation_summary(created_total):
         "device_change_flag",
         "sim_change_flag",
         "location_change_flag",
+        "impossible_travel_flag",
         "combined_device_location_flag",
     ]
     labels = _label_map()

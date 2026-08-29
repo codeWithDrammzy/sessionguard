@@ -51,7 +51,7 @@ from rest_framework.views import APIView
 from core.explanation import explain_decision
 from core.feature_engine import compute_features, load_user_history
 from core.hybrid_scorer import score_session_hybrid
-from core.models import BankUser, Session, Transaction
+from core.models import BankUser, KeystrokeDynamics, Session, Transaction
 from core.serializers import SessionEventSerializer
 
 logger = logging.getLogger(__name__)
@@ -165,6 +165,31 @@ class SessionEventView(APIView):
                     not in user.typical_recipients
                 ),
             )
+
+        # Keystroke evidence (app channel) is persisted BEFORE feature
+        # computation so it is part of THIS session's feature vector --
+        # previously bank_send_money created it AFTER scoring, meaning the
+        # very transaction being examined could never see its own pattern.
+        # login_pin_failures is the login-phase signal added by this task.
+        ks_payload = data.get("keystroke")
+        if ks_payload and session.channel == "app":
+            try:
+                KeystrokeDynamics.objects.create(
+                    session=session,
+                    avg_hold_time_ms=float(ks_payload.get("avg_hold_time_ms", 0)),
+                    avg_interval_ms=float(ks_payload.get("avg_interval_ms", 0)),
+                    typing_speed_cpm=float(ks_payload.get("typing_speed_cpm", 0)),
+                    login_pin_failures=(
+                        int(ks_payload["login_pin_failures"])
+                        if ks_payload.get("login_pin_failures") is not None
+                        else None
+                    ),
+                )
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Malformed keystroke payload ignored for session %s",
+                    session.session_id,
+                )
 
         features = compute_features(session, history=history)
         features.save()  # a real event now: persisted like training history

@@ -10,9 +10,11 @@ benign, injected sessions carry a ``FraudLabel(is_attack=True)``.
 
 Two attack archetypes (60/40 split of targets):
 
-* ``credential_thief`` -- loud takeover: new device, new SIM, new location,
-  off-hours login, near-maximum transfer to a brand-new beneficiary. Every
-  classical signal fires at once; the detector must never miss these.
+* ``credential_thief`` -- loud takeover: new device, new SIM, a leap to a
+  far international city (>=3000 km away) a few minutes after the victim's
+  last recorded login, plus a near-maximum transfer to a brand-new
+  beneficiary. Every classical signal fires at once -- including the
+  physically-impossible-travel signal the detector must never miss.
 * ``patient_low_and_slow`` -- quiet takeover: NEW DEVICE is the only hard
   signal. SIM unchanged (attacker controls OTP delivery), location and
   login hour blend into the victim's routine, amount deliberately held at
@@ -24,11 +26,12 @@ Two attack archetypes (60/40 split of targets):
   sessions). The SWAPPED SIM is unavoidably visible and IS the primary
   fraud signal on this channel -- unlike app-world SIM changes, which are
   routine. Ships in the same obvious/patient duality: the loud variant
-  strikes from a new tower/location, off-hours, at near-maximum amounts
-  with fumbling 100-180s sessions; the patient variant reuses the victim's
-  real location and login hours, stays under the amount ceiling, runs
-  slightly-elevated 70-110s sessions, and differs mainly in menu-
-  navigation pace (moderate deviation vs the victim's rhythm).
+  leaps to a far international city minutes after the victim's last
+  session, at near-maximum amounts with fumbling 100-180s sessions; the
+  patient variant reuses the victim's real location and login hours,
+  stays under the amount ceiling, runs slightly-elevated 70-110s sessions,
+  and differs mainly in menu-navigation pace (moderate deviation vs the
+  victim's rhythm).
 
 DESIGN DECISIONS WORTH AUDITING
 -------------------------------
@@ -44,10 +47,14 @@ DESIGN DECISIONS WORTH AUDITING
   devices/SIM/geohashes/network IDs are aggregated from each victim's
   existing Session rows -- so an attack contrasts against the victim's
   genuine baseline, however noisy it is.
-* Attack timing resolves the tension between "shortly after now" and the
-  inside/outside-window constraints by taking the NEAREST compliant moment
-  after scoring time (rolling forward hour-by-hour, capped well within a
-  day). The attack represents "the moment being scored in real time".
+* Attack timing: PATIENT attacks resolve the tension between "shortly
+  after now" and the inside/outside-window constraints by taking the
+  NEAREST compliant moment after scoring time (rolling forward hour-by-
+  hour, capped well within a day). LOUD attacks instead anchor 10-40
+  minutes after the victim's OWN last baseline session and leap to a far
+  city -- the impossible-travel leap IS their discriminating signal, so
+  they no longer need an off-hours roll to stand out (see
+  ``anchored_attack_time``/``far_city_geohash``).
 * Exactly ONE transfer per attack session (the heist itself);
   ``time_since_last_transaction_seconds`` is computed against the victim's
   real last baseline transaction for continuity.
@@ -88,6 +95,7 @@ django.setup()
 
 from django.utils import timezone  # noqa: E402
 
+from core.geohash_util import FAR_ATTACK_CITIES, geohash_encode  # noqa: E402
 from core.models import BankUser, FraudLabel, KeystrokeDynamics, Session, Transaction  # noqa: E402
 
 SEED = 44  # third independent stream (42 users, 43 sessions)
@@ -96,7 +104,6 @@ USSD_TARGET_SHARE = 0.12  # 12% of the USSD-only pool (~98 users -> ~12)
 OBVIOUS_SHARE = 0.60  # credential_theft / obvious-sim-swap share of targets
 
 _HEX = "0123456789abcdef"
-_GEOHASH_ALPHABET = "0123456789bcdefghjkmnpqrstuvwxyz"
 _RECIPIENT_ALPHABET = string.ascii_uppercase + string.digits
 
 
@@ -173,6 +180,12 @@ class VictimProfile:
             .first()
         )
 
+        # The victim's MOST RECENT baseline session (any channel) -- the
+        # anchor point for loud-attack timing: an obvious takeover strikes
+        # 10-40 minutes after THIS session, at a city >=3000 km away, which
+        # implies a physically impossible travel speed.
+        self.last_session = max(sessions, key=lambda s: s.timestamp)
+
         self.forbidden_geo = set(self.geohashes_by_rank)
 
         self.user = user
@@ -223,6 +236,34 @@ def pick_attack_time(rng, now, windows, want_inside):
     return t  # unreachable in practice; keeps type-checkers happy
 
 
+def anchored_attack_time(profile, rng):
+    """
+    Loud-attack timing: 10-40 minutes after the victim's LAST BASELINE
+    session.
+
+    Anchoring to that precise prior session (rather than an arbitrary
+    near-now moment) guarantees the impossible-travel judgement has a
+    determinable "last location" to compare against: the attack leapfrogs
+    from a place the victim just proved they were at, at a speed no human
+    can travel. The routine-hour-of-day signal is deliberately NOT used
+    for loud attacks anymore -- the leap is the discriminating signal, so
+    mixing an off-hours roll into the timing would only blur the model's
+    clean separation between "obvious blink-attack" and other archetypes.
+    """
+    return profile.last_session.timestamp + timedelta(
+        minutes=rng.randint(10, 40)
+    )
+
+
+def far_city_geohash(rng):
+    """Precision-6 geohash of a random far-international city. Every choice
+    is >=3000 km from every Nigerian city, so even the tightest 10-minute
+    window implies far beyond the 900 km/h impossible-travel threshold;
+    and the anchor is 10-40 minutes, so the flag always fires."""
+    _name, lat, lon = rng.choice(FAR_ATTACK_CITIES)
+    return geohash_encode(lat, lon)
+
+
 def build_transaction(rng, profile, session, amount_ratio_range, force_new_recipient):
     """
     One heist transfer on the attack session.
@@ -251,7 +292,12 @@ def build_transaction(rng, profile, session, amount_ratio_range, force_new_recip
 
     gap = None
     if profile.last_tx is not None:
-        gap = int((session.timestamp - profile.last_tx.timestamp).total_seconds())
+        # Clamp at 0: a negative gap would mean the heist happened BEFORE the
+        # victim's last baseline transaction, which either indicates a stale
+        # baseline row or a clock/anchoring inconsistency -- never a real
+        # credit ("the last transfer is in the future"). Zero is the honest
+        # result: "another transfer arrived immediately after".
+        gap = int(max(0, (session.timestamp - profile.last_tx.timestamp).total_seconds()))
 
     return Transaction(
         transaction_id=deterministic_uuid(rng),
@@ -265,19 +311,19 @@ def build_transaction(rng, profile, session, amount_ratio_range, force_new_recip
 
 
 def build_obvious_attack(rng, profile, now):
-    """credential_theft: every classical signal fires simultaneously."""
+    """credential_theft: every classical signal fires simultaneously --
+    new device, new SIM, and a physically-impossible leap to a far
+    international city minutes after the victim's last baseline session."""
     user = profile.user
 
     session = Session(
         session_id=deterministic_uuid(rng),
         user=user,
         channel="app",
-        timestamp=pick_attack_time(rng, now, user.typical_login_hours, False),
+        timestamp=anchored_attack_time(profile, rng),
         device_fingerprint=_fresh(rng, _HEX, 64, profile.devices),
         sim_id=_fresh(rng, _HEX, 64, {profile.real_sim}),
-        location_geohash=_fresh(
-            rng, _GEOHASH_ALPHABET, 6, profile.forbidden_geo
-        ),
+        location_geohash=far_city_geohash(rng),
         ip_or_cell_tower_id=_fresh_ip(rng, set()),
         is_new_device=True,
         is_new_sim=True,
@@ -397,9 +443,10 @@ def build_sim_swap_attack(rng, profile, now, obvious):
     Hand-stamping the score here would be label leakage: the model could
     learn our generation choices instead of actual behavioural contrast.
 
-    ``obvious=True``  -> loud: new tower/location, off-hours login,
-                         0.95-1.25x amounts, fumbling 100-180s session --
-                         far outside any normal USSD interaction.
+    ``obvious=True``  -> loud: leap to a far city minutes after the
+                         victim's last session, 0.95-1.25x amounts,
+                         fumbling 100-180s session -- far outside any
+                         normal USSD interaction.
     ``obvious=False`` -> patient: victim's REAL geohash+tower, in-hours,
                          0.40-0.70x amounts, slightly-elevated 70-110s
                          session (attacker observed the victim's rhythm
@@ -409,8 +456,9 @@ def build_sim_swap_attack(rng, profile, now, obvious):
     user = profile.user
 
     if obvious:
-        # Brand-new location pair, disjoint from anything in their history.
-        geohash = _fresh(rng, _GEOHASH_ALPHABET, 6, profile.forbidden_geo)
+        # Leap to a far international city, minutes after the victim's last
+        # baseline session (physically impossible travel).
+        geohash = far_city_geohash(rng)
         known_networks = set().union(*profile.networks_per_geo.values())
         network_id = "TWR-" + _hex_string(rng, 8)
         while network_id in known_networks:
@@ -433,8 +481,10 @@ def build_sim_swap_attack(rng, profile, now, obvious):
         session_id=deterministic_uuid(rng),
         user=user,
         channel="ussd",
-        timestamp=pick_attack_time(
-            rng, now, user.typical_login_hours, want_inside=not obvious
+        timestamp=(
+            anchored_attack_time(profile, rng)
+            if obvious
+            else pick_attack_time(rng, now, user.typical_login_hours, True)
         ),
         # Schema-consistent: USSD sessions NEVER carry a fingerprint. The
         # absence of a device is not evidence of anything on this channel,
@@ -469,7 +519,21 @@ def build_sim_swap_attack(rng, profile, now, obvious):
 
 def main():
     rng = random.Random(SEED)
-    now = timezone.now()  # same reference semantic as generate_sessions.py
+    # Anchor every attack AFTER the most recent baseline session, not to the
+    # wall clock: attacks must always postdate the victim's last stored
+    # baseline row. (The baseline snapshot timestamp can legitimately outrun
+    # the runtime clock -- e.g. a regenerated dataset -- and anchoring to the
+    # wall clock alone then collides attack times with future-dated rows.)
+    latest_baseline = Session.objects.order_by("-timestamp").values_list(
+        "timestamp", flat=True
+    ).first()
+    now = timezone.now()
+    if latest_baseline is not None and latest_baseline > now:
+        print(
+            f"NOTE: baseline extends to {latest_baseline.isoformat()} (ahead "
+            f"of wall clock {now.isoformat()}); anchoring attacks to baseline."
+        )
+        now = latest_baseline
 
     stale = Session.objects.filter(fraud_label__is_attack=True)
     if stale.count():
@@ -538,6 +602,15 @@ def main():
         )
         sessions.append(s); transactions.append(tx); labels.append(lbl)
         stats["sim_swap_takeover (ussd)"].append(ratio)
+
+    # Idempotent insert: prune EVERY row matching the deterministic session
+    # IDs we are about to (re)create, regardless of label state. A prior run
+    # that died part-way can leave label-less attack sessions behind (the
+    # label-filtered stale delete above cannot see those), and re-inserting
+    # the same UUIDs would violate the primary key.
+    orphan_ids = [s.session_id for s in sessions]
+    if Session.objects.filter(session_id__in=orphan_ids).exists():
+        Session.objects.filter(session_id__in=orphan_ids).delete()
 
     Session.objects.bulk_create(sessions)
     KeystrokeDynamics.objects.bulk_create(keystrokes)
