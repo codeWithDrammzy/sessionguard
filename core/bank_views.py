@@ -114,6 +114,11 @@ def bank_signup(request):
             {"error": "first_name and phone_number are required."},
             status=drf_status.HTTP_400_BAD_REQUEST,
         )
+    if not re.fullmatch(r"\d{10}", phone):
+        return Response(
+            {"error": "Phone number must be exactly 10 digits."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
     if BankUser.objects.filter(
             phone_number__in=_phone_variants(phone)).exclude(
             phone_number="").exists():

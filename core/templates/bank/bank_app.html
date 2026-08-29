@@ -693,13 +693,21 @@ const r = await api("/api/bank/login/", {phone_number: phone});
       <label class="lbl">Full name</label>
       <input class="field" id="suName" placeholder="e.g. Adaeze Nwosu">
       <label class="lbl">Phone number</label>
-      <input class="field" id="suPhone" placeholder="0801 234 5678" inputmode="tel">
+      <input class="field" id="suPhone" placeholder="e.g. 8023456789" inputmode="numeric"
+             maxlength="10">
       <button class="btn" id="suBtn">Open account &middot; NGN 500,000</button>
       <button class="btn muted" id="suBack" style="font-size:12px">Back</button>`;
+    // Phone input: digits only, capped at 10 (same rule as the recipient
+    // account-number field) -- letters/extra digits are stripped as typed.
+    const suPhoneEl = document.getElementById("suPhone");
+    suPhoneEl.addEventListener("input", () => {
+      suPhoneEl.value = suPhoneEl.value.replace(/\D/g, "").slice(0, 10);
+    });
     document.getElementById("suBtn").onclick = async () => {
       const name = document.getElementById("suName").value.trim();
-      const phone = document.getElementById("suPhone").value.trim();
+      const phone = suPhoneEl.value.trim();
       if (!name || !phone) { renderSignup("Please enter your name and phone number."); return; }
+      if (!/^\d{10}$/.test(phone)) { renderSignup("Phone number must be exactly 10 digits."); return; }
       const r = await api("/api/bank/signup/", {first_name: name, phone_number: phone});
       if (r.error) { renderSignup(r.error); return; }
       USER = {user_id: r.user_id, first_name: r.first_name};
