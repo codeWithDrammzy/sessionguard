@@ -723,7 +723,7 @@ _</div>
       <div class="pin-dots" id="pinDots"></div>
       <div class="pin-grid" id="pinGrid"></div>`;
     initPinPad(6, pin => {
-      store.set("sg_login_pin", pin);
+      store.set("sg_login_pin_" + USER.user_id, pin);
       renderPinSetupTransfer();
     });
   }
@@ -739,7 +739,7 @@ _</div>
       <div class="pin-dots" id="pinDots"></div>
       <div class="pin-grid" id="pinGrid"></div>`;
     initPinPad(4, pin => {
-      store.set("sg_transfer_pin", pin);
+      store.set("sg_transfer_pin_" + USER.user_id, pin);
       renderDashboard();
     });
   }
@@ -762,10 +762,13 @@ _</div>
         ? `<button class="btn muted" id="switchBack" style="margin-top:10px;font-size:12px">Switch back to original device</button>`
         : `<button class="btn muted" id="clearUser" style="margin-top:10px;font-size:12px">Not you? Log out</button>`
       }`;
-    // Design choice: login uses the 6-digit sg_login_pin;
-    // transfer confirmation uses the separate 4-digit sg_transfer_pin.
+    // Scratch-pad PIN check is client-side and PER-ACCOUNT: the key is
+    // namespaced by user_id so two demo customers on this device can each
+    // hold their own 6-digit login PIN instead of sharing one global slot.
+    // Login uses sg_login_pin_<uid>; transfer confirmation checks the
+    // separate 4-digit sg_transfer_pin_<uid>.
     initPinPad(6, pin => {
-      const saved = store.get("sg_login_pin");
+      const saved = store.get("sg_login_pin_" + (USER ? USER.user_id : ""));
       if (pin === saved) {
         if (!USER) USER = store.get("sg_user");
         // Only persist the active user once their login PIN is VERIFIED.
@@ -788,9 +791,16 @@ _</div>
       document.getElementById("switchBack").onclick = () => doSwitchBack();
     } else {
       document.getElementById("clearUser").onclick = () => {
+        if (USER) {
+          // "Not you?" — this is a fresh visitor on OUR device: drop the
+          // active account's PINs so it can't be drifted into later.
+          localStorage.removeItem("sg_login_pin_" + USER.user_id);
+          localStorage.removeItem("sg_transfer_pin_" + USER.user_id);
+        } else {
+          localStorage.removeItem("sg_login_pin");
+          localStorage.removeItem("sg_transfer_pin");
+        }
         localStorage.removeItem("sg_user");
-        localStorage.removeItem("sg_login_pin");
-        localStorage.removeItem("sg_transfer_pin");
         localStorage.removeItem("sg_pin");
         USER = null;
         renderSignup();
@@ -943,8 +953,8 @@ _</div>
   }
 
   // ---- SCREEN: PIN Confirmation (before transfer) ----
-  // Uses the dedicated 4-digit sg_transfer_pin, independent from the
-  // 6-digit login PIN — matching how real Nigerian banking apps separate
+  // Uses the dedicated 4-digit sg_transfer_pin_<user_id>, independent from
+  // the 6-digit login PIN — matching how real Nigerian banking apps separate
   // login credentials from transaction authorization.
   let pendingTxn = null;
   function renderPinConfirm(txn, error) {
@@ -953,7 +963,7 @@ _</div>
       ${error ? `<div class="banner block" style="margin-bottom:4px">${error}</div>` : ""}
       ${pinPadHTML(4, `Confirm transfer of ${naira(txn.amount)}`)}`;
     initPinPad(4, pin => {
-      const saved = store.get("sg_transfer_pin");
+      const saved = store.get("sg_transfer_pin_" + USER.user_id);
       if (pin === saved) { submitTransfer(pendingTxn); }
       else { renderPinConfirm(txn, "Incorrect PIN. Try again."); }
     });
@@ -1252,8 +1262,8 @@ _</div>
     // Was in switched-device mode last session: show PIN login, not dashboard.
     renderPinLogin();
   } else if (USER) {
-    const hasLoginPin = store.get("sg_login_pin");
-    const hasTransferPin = store.get("sg_transfer_pin");
+    const hasLoginPin = store.get("sg_login_pin_" + USER.user_id);
+    const hasTransferPin = store.get("sg_transfer_pin_" + USER.user_id);
     if (hasLoginPin && hasTransferPin) renderDashboard();
     else renderPinSetup();
   } else {

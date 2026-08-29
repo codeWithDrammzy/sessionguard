@@ -34,6 +34,7 @@ if __name__ == "__main__":
 from decimal import Decimal  # noqa: E402
 
 from django.db import transaction  # noqa: E402
+from django.db.models import Q  # noqa: E402
 from django.utils import timezone  # noqa: E402
 from django.views.generic import TemplateView  # noqa: E402
 from rest_framework import status as drf_status  # noqa: E402
@@ -378,15 +379,21 @@ def bank_lookup_account(request):
             {"error": "account_number must be exactly 10 digits."},
             status=drf_status.HTTP_400_BAD_REQUEST,
         )
-    # Internal SessionGuard customer? Their account number IS their phone
+    # Internal SessionGuard customer? Their account number is their phone
     # number with the leading zero stripped, so reverse the transformation
-    # and match against a real customer. (Exclude the blank default the
-    # seeded dataset predates, exactly like the signup uniqueness check.)
+    # and match against a real customer. Signup stores the phone number
+    # verbatim as typed (some customers type it without the leading zero),
+    # so accept BOTH "0" + acct and acct itself. (Exclude the blank default
+    # the seeded dataset predates, exactly like the signup uniqueness check.)
     internal = (BankUser.objects
-                .filter(phone_number="0" + acct)
+                .filter(Q(phone_number="0" + acct) | Q(phone_number=acct))
                 .exclude(phone_number="")
                 .first())
     if internal is not None:
+        # If a random directory name was minted for this number before the
+        # customer became reachable by lookup, drop it so it can never
+        # shadow the real name on a later enquiry.
+        RecipientDirectory.objects.filter(account_number=acct).delete()
         return Response({
             "account_number": acct,
             "display_name": internal.first_name,
