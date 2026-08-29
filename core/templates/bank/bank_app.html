@@ -779,7 +779,18 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     // Login uses sg_login_pin_<uid>; transfer confirmation checks the
     // separate 4-digit sg_transfer_pin_<uid>.
     initPinPad(6, pin => {
-      const saved = store.get("sg_login_pin_" + (USER ? USER.user_id : ""));
+      if (!USER) { renderWelcome(); return; }
+      const saved = store.get("sg_login_pin_" + USER.user_id);
+      // Fresh browser/device: this account has never enrolled a PIN HERE
+      // (e.g. it was registered on another browser, whose localStorage is
+      // private per-browser). Enrolling PINs on first contact replaces the
+      // old dead-end where the correct PIN was rejected for "not being
+      // stored" -- a genuine cross-browser login failure.
+      if (!saved) {
+        store.set("sg_user", USER);
+        renderPinSetup();
+        return;
+      }
       if (pin === saved) {
         if (!USER) USER = store.get("sg_user");
         // Only persist the active user once their login PIN is VERIFIED.
