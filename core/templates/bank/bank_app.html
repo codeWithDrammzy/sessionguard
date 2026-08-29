@@ -635,7 +635,10 @@ _</div>
   }
 
   // ---- SCREEN: Welcome (login-first entry point for visitors) ----
-  function renderWelcome(error) {
+  // Login-or-create decision screen. If the number has no account, the
+  // error is shown RIGHT HERE (never on a PIN page), and the typed number
+  // is preserved so they can fix it in place.
+  function renderWelcome(error, phoneVal) {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
     startKeystrokeSession();
@@ -648,7 +651,7 @@ _</div>
       ${error ? `<div class="banner block" style="margin-top:10px">${error}</div>` : ""}
       <div style="margin-top:12px">
         <label class="lbl">Phone number</label>
-        <input class="field" id="wlPhone" placeholder="0801 234 5678" inputmode="tel">
+        <input class="field" id="wlPhone" placeholder="0801 234 5678" inputmode="tel" value="${phoneVal || ""}">
         <button class="btn" id="wlCont" style="margin-top:10px">Continue</button>
       </div>
       <hr style="border-color:var(--border);width:100%;margin-top:14px">
@@ -665,9 +668,9 @@ _</div>
         const cont = document.getElementById("wlCont");
         cont.disabled = true;
         cont.textContent = "Checking...";
-        const r = await api("/api/bank/login/", {phone_number: phone});
+const r = await api("/api/bank/login/", {phone_number: phone});
         if (r.error) {
-          renderWelcome("No account found with this phone number. Create an account instead?");
+          renderWelcome(r.error, phone);
           return;
         }
         USER = {user_id: r.user_id, first_name: r.first_name};

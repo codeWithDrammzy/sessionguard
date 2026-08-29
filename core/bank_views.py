@@ -17,6 +17,7 @@ Design notes:
 """
 
 import os
+import re
 import sys
 import uuid
 from collections import OrderedDict
@@ -34,7 +35,6 @@ if __name__ == "__main__":
 from decimal import Decimal  # noqa: E402
 
 from django.db import transaction  # noqa: E402
-from django.db.models import Q  # noqa: E402
 from django.utils import timezone  # noqa: E402
 from django.views.generic import TemplateView  # noqa: E402
 from rest_framework import status as drf_status  # noqa: E402
@@ -49,6 +49,19 @@ from core.views import run_scoring_pipeline  # noqa: E402
 # exactly like an unclaimed OTP expiring. Bounded to stay honest about it.
 CHALLENGE_HOLDS = OrderedDict()
 HOLD_LIMIT = 200
+
+
+def _phone_variants(raw) -> set:
+    """Return every plausible form a customer might type for one phone
+    number: digits only, and both with/without a single leading zero
+    (Nigerian numbers are stored as "081..."; customers may type the
+    10-digit NUBAN form "81..." and vice-versa). Used by login, signup
+    uniqueness and recipient lookup so an existing account is never
+    silently misjudged as "does not exist" just because of formatting.
+    """
+    digits = re.sub(r"\D", "", raw or "")
+    base = digits[1:] if digits.startswith("0") else digits
+    return {digits, base, "0" + base}
 
 
 def phone_to_account_number(phone_number) -> str:
@@ -95,13 +108,14 @@ def bank_signup(request):
     feature engine treats no-history as 'nothing to compare' (never
     punished), so brand-new customers are not friction-bombed."""
     first_name = (request.data.get("first_name") or "").strip()
-    phone = (request.data.get("phone_number") or "").strip()
+    phone = re.sub(r"\D", "", (request.data.get("phone_number") or "").strip())
     if not first_name or not phone:
         return Response(
             {"error": "first_name and phone_number are required."},
             status=drf_status.HTTP_400_BAD_REQUEST,
         )
-    if BankUser.objects.filter(phone_number=phone).exclude(
+    if BankUser.objects.filter(
+            phone_number__in=_phone_variants(phone)).exclude(
             phone_number="").exists():
         return Response(
             {"error": "That phone number is already registered."},
@@ -129,11 +143,17 @@ def bank_signup(request):
 @api_view(["POST"])
 def bank_login(request):
     """DEMO: phone-number 'login' (no passwords -- prototype scope).
-    Returns the same shape as signup so the frontend treats both alike."""
-    phone = (request.data.get("phone_number") or "").strip()
-    try:
-        user = BankUser.objects.get(phone_number=phone)
-    except BankUser.DoesNotExist:
+    Returns the same shape as signup so the frontend treats both alike.
+    Matching is tolerant to formatting (spaces/dashes/leading zero) so the
+    frontend can say "no account" definitively, right on the first screen,
+    without ever misfiling an existing customer."""
+    phone = re.sub(r"\D", "", (request.data.get("phone_number") or "").strip())
+    if not phone:
+        return Response({"error": "Enter your phone number."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    user = BankUser.objects.filter(
+        phone_number__in=_phone_variants(phone)).first()
+    if user is None:
         return Response({"error": "No account found for that number."},
                         status=drf_status.HTTP_404_NOT_FOUND)
     return Response({
@@ -383,10 +403,11 @@ def bank_lookup_account(request):
     # number with the leading zero stripped, so reverse the transformation
     # and match against a real customer. Signup stores the phone number
     # verbatim as typed (some customers type it without the leading zero),
-    # so accept BOTH "0" + acct and acct itself. (Exclude the blank default
-    # the seeded dataset predates, exactly like the signup uniqueness check.)
+    # so match every plausible form of the phone. (Exclude the blank
+    # default the seeded dataset predates, exactly like the signup
+    # uniqueness check.)
     internal = (BankUser.objects
-                .filter(Q(phone_number="0" + acct) | Q(phone_number=acct))
+                .filter(phone_number__in=_phone_variants("0" + acct))
                 .exclude(phone_number="")
                 .first())
     if internal is not None:
@@ -419,3 +440,12 @@ class BankAppView(TemplateView):
     """DEMO: the customer-facing experience page (app + USSD simulator)."""
 
     template_name = "bank/bank_app.html"
+
+    def get(self, request, *args, **kwargs):
+        response = super().get(request, *args, **kwargs)
+        # Never cache the app bundle: a stale copy in a browser/proxy makes
+        # the demo silently run old logic (stale PIN keys, PIN-first boot).
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response

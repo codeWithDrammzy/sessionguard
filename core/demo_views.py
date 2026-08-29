@@ -59,3 +59,11 @@ class ControlRoomView(TemplateView):
     """DEMO ONLY: the single-page Control Room dashboard."""
 
     template_name = "demo/control_room.html"
+
+    def get(self, request, *args, **kwargs):
+        response = super().get(request, *args, **kwargs)
+        # Never cache the demo bundle (see BankAppView).
+        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response["Pragma"] = "no-cache"
+        response["Expires"] = "0"
+        return response
