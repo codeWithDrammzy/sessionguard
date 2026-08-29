@@ -1251,23 +1251,14 @@ _</div>
   // ==================== BOOT ====================
   ensureDevices();
   applyDeviceMode();
-  // Legacy migration: if the old single sg_pin key exists but the new
-  // two-PIN keys don't, treat as incomplete and force re-setup.
-  if (store.get("sg_pin") && !store.get("sg_login_pin")) {
-    localStorage.removeItem("sg_pin");
-    localStorage.removeItem("sg_user");
-    USER = null;
-  }
+  // Login-first always: on load the customer sees the Welcome screen where
+  // they can either log in (enter phone -> PIN) or create a new account.
+  // Nothing is auto-resumed from localStorage, so stale identity/PIN state
+  // from a previous session can never dump a visitor into a PIN pad.
   if (isSwitched()) {
-    // Was in switched-device mode last session: show PIN login, not dashboard.
+    // Preserve the "switched device" demo: it needs its own honest banner.
     renderPinLogin();
-  } else if (USER) {
-    const hasLoginPin = store.get("sg_login_pin_" + USER.user_id);
-    const hasTransferPin = store.get("sg_transfer_pin_" + USER.user_id);
-    if (hasLoginPin && hasTransferPin) renderDashboard();
-    else renderPinSetup();
   } else {
-    // Visitor with no active user context: login-first Welcome.
     renderWelcome();
   }
 </script>
