@@ -34,6 +34,7 @@ if __name__ == "__main__":
 
 from decimal import Decimal  # noqa: E402
 
+from django.contrib.auth.hashers import check_password, make_password  # noqa: E402
 from django.db import transaction  # noqa: E402
 from django.utils import timezone  # noqa: E402
 from django.views.generic import TemplateView  # noqa: E402
@@ -167,6 +168,71 @@ def bank_login(request):
         "phone_number": user.phone_number,
         "balance": str(user.balance),
     })
+
+
+@api_view(["POST"])
+def bank_set_pin(request):
+    """DEMO: one-time server-side PIN setup (replaces client-localStorage
+    PIN storage). Hashes both the 6-digit login PIN and the 4-digit transfer
+    PIN with Django's make_password() and stores them on the BankUser record,
+    so the SAME account answers with the SAME PIN from any browser/device.
+
+    No forgot/reset/recovery flow by explicit design: once BOTH hashes are
+    set this endpoint refuses to overwrite. A half-completed setup (only one
+    hash present) may be re-run to finish the pair.
+    """
+    user_id = request.data.get("user_id") or ""
+    login_pin = (request.data.get("login_pin") or "").strip()
+    transfer_pin = (request.data.get("transfer_pin") or "").strip()
+    try:
+        user = BankUser.objects.get(user_id=user_id)
+    except BankUser.DoesNotExist:
+        return Response({"error": "Unknown account."},
+                        status=drf_status.HTTP_404_NOT_FOUND)
+    if user.login_pin_hash and user.transfer_pin_hash:
+        return Response(
+            {"error": "PINs are already set for this account (one-time setup)."},
+            status=drf_status.HTTP_400_BAD_REQUEST)
+    if not login_pin or not transfer_pin:
+        return Response({"error": "login_pin and transfer_pin are required."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    if not re.fullmatch(r"\d{6}", login_pin):
+        return Response({"error": "Login PIN must be exactly 6 digits."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    if not re.fullmatch(r"\d{4}", transfer_pin):
+        return Response({"error": "Transfer PIN must be exactly 4 digits."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    user.login_pin_hash = make_password(login_pin)
+    user.transfer_pin_hash = make_password(transfer_pin)
+    user.save(update_fields=["login_pin_hash", "transfer_pin_hash"])
+    return Response({"ok": True})
+
+
+@api_view(["POST"])
+def bank_verify_pin(request):
+    """DEMO: server-side PIN check (replaces the client-localStorage
+    comparison). The browser only collects the digits; correctness is decided
+    here with check_password() against the stored hash for the requested
+    purpose. A null hash answers ``pin_not_set`` so the app can route that
+    account through the ONE-TIME setup exactly like a fresh signup."""
+    purpose = (request.data.get("purpose") or "").strip().lower()
+    pin = (request.data.get("pin") or "").strip()
+    try:
+        user = BankUser.objects.get(user_id=request.data.get("user_id"))
+    except BankUser.DoesNotExist:
+        return Response({"error": "Unknown account."},
+                        status=drf_status.HTTP_404_NOT_FOUND)
+    if purpose not in ("login", "transfer"):
+        return Response({"error": "purpose must be 'login' or 'transfer'."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    if not pin:
+        return Response({"error": "pin is required."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    stored_hash = (user.login_pin_hash if purpose == "login"
+                   else user.transfer_pin_hash)
+    if not stored_hash:
+        return Response({"code": "pin_not_set", "verified": False})
+    return Response({"verified": bool(check_password(pin, stored_hash))})
 
 
 @api_view(["GET"])

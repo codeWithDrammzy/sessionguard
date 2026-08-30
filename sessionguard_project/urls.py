@@ -19,7 +19,7 @@ from django.urls import path
 
 from core.bank_views import (
     BankAppView, bank_login, bank_lookup_account, bank_send_money,
-    bank_signup, bank_state,
+    bank_set_pin, bank_signup, bank_state, bank_verify_pin,
 )
 from core.demo_views import ControlRoomView, demo_scenarios, toggle_offline
 from core.views import SessionEventView
@@ -40,6 +40,8 @@ urlpatterns = [
     path('bank/', BankAppView.as_view(), name='bank-app'),
     path('api/bank/signup/', bank_signup, name='bank-signup'),
     path('api/bank/login/', bank_login, name='bank-login'),
+    path('api/bank/set-pin/', bank_set_pin, name='bank-set-pin'),
+    path('api/bank/verify-pin/', bank_verify_pin, name='bank-verify-pin'),
     path('api/bank/state/<uuid:user_id>/', bank_state, name='bank-state'),
     path('api/bank/send-money/', bank_send_money, name='bank-send-money'),
     path('api/bank/lookup-account/', bank_lookup_account, name='bank-lookup-account'),

@@ -92,6 +92,25 @@ class BankUser(models.Model):
         help_text="Demo ledger balance; deducted ONLY on approved transfers.",
     )
 
+    # Server-side PIN credentials. Stored as Django PBKDF2 hashes (via
+    # make_password()) so the same account answers with the same PIN from any
+    # browser/device; the client only ever collects digits and posts them for
+    # verification. Null values mean "PIN not set yet" -- the one-time setup
+    # flow establishes them on first login. Deliberately no forgot/reset path
+    # in this prototype.
+    login_pin_hash = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+        help_text="PBKDF2 hash of the 6-digit login PIN. Never plaintext.",
+    )
+    transfer_pin_hash = models.CharField(
+        max_length=128,
+        null=True,
+        blank=True,
+        help_text="PBKDF2 hash of the 4-digit transfer PIN. Never plaintext.",
+    )
+
     # List of hour ranges (e.g. [[7, 9], [18, 22]]) in which the user normally
     # logs in. Used to compute the hour-deviation feature at scoring time.
     typical_login_hours = models.JSONField(

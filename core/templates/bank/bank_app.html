@@ -717,31 +717,37 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     document.getElementById("suBack").onclick = () => renderWelcome();
   }
 
-  // ---- SCREEN: PIN Setup (after signup) ----
+  // ---- SCREEN: PIN Setup (after signup / first login with no PIN) ----
   // Two-step sequential PIN setup. Step A collects a 6-digit login PIN;
-  // Step B collects a 4-digit transfer PIN. Both are stored independently
-  // in localStorage and never derived from each other.
-  function renderPinSetup() {
+  // Step B collects a 4-digit transfer PIN. Both are hashed and stored
+  // SERVER-side by /api/bank/set-pin/ (Django make_password) so this
+  // account answers with the SAME PIN from any browser/device -- nothing
+  // PIN-related ever lives in localStorage. One-time by design: there is
+  // deliberately NO forgot/reset/recovery flow in this prototype.
+  let _pendingLoginPin = null;
+  function renderPinSetup(notice) {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
     startKeystrokeSession();
     appScreen.innerHTML = `
+      ${notice ? `<div class="banner approve" style="margin-bottom:4px">${notice}</div>` : ""}
       <div style="text-align:center;margin-top:6px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Step 1 of 2</div>
         <div style="font-size:15px;font-weight:700">Set your 6-digit login PIN</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">This secures access to your account</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">This secures access to your account on any browser</div>
       </div>
       <div class="pin-dots" id="pinDots"></div>
       <div class="pin-grid" id="pinGrid"></div>`;
     initPinPad(6, pin => {
-      store.set("sg_login_pin_" + USER.user_id, pin);
+      _pendingLoginPin = pin;
       renderPinSetupTransfer();
     });
   }
 
-  function renderPinSetupTransfer() {
+  function renderPinSetupTransfer(error) {
     appScreen.innerHTML = `
       <div class="banner approve" style="margin-bottom:2px">Login PIN saved</div>
+      ${error ? `<div class="banner block" style="margin-bottom:2px">${error}</div>` : ""}
       <div style="text-align:center;margin-top:4px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Step 2 of 2</div>
         <div style="font-size:15px;font-weight:700">Set your 4-digit transfer PIN</div>
@@ -749,13 +755,36 @@ const r = await api("/api/bank/login/", {phone_number: phone});
       </div>
       <div class="pin-dots" id="pinDots"></div>
       <div class="pin-grid" id="pinGrid"></div>`;
-    initPinPad(4, pin => {
-      store.set("sg_transfer_pin_" + USER.user_id, pin);
-      renderDashboard();
+    initPinPad(4, async pin => {
+      let r;
+      try {
+        r = await api("/api/bank/set-pin/", {
+          user_id: USER.user_id,
+          login_pin: _pendingLoginPin,
+          transfer_pin: pin,
+        });
+      } catch (e) {
+        renderPinSetupTransfer("Network error. Could not save your PINs. Please try again.");
+        return;
+      }
+      if (r.ok) {
+        // Identity cache only -- NEVER stores the PIN digits themselves.
+        store.set("sg_user", USER);
+        _pendingLoginPin = null;
+        renderDashboard();
+      } else {
+        renderPinSetupTransfer(r.error || "Could not save your PINs. Please try again.");
+      }
     });
   }
 
   // ---- SCREEN: PIN Login ----
+  // PIN correctness is decided SERVER-side via /api/bank/verify-pin/ against
+  // the stored PBKDF2 hash. The browser only collects the 6 digits and posts
+  // them; nothing PIN-related is kept in localStorage, so the SAME account +
+  // SAME PIN works from any browser/device. An account with no server-side
+  // PIN yet (pre-existing, or registered on another browser) is routed
+  // through the ONE-TIME setup on first contact.
   function renderPinLogin(error) {
     _authenticated = false;
     clearTimeout(_inactivityTimer);
@@ -773,33 +802,31 @@ const r = await api("/api/bank/login/", {phone_number: phone});
         ? `<button class="btn muted" id="switchBack" style="margin-top:10px;font-size:12px">Switch back to original device</button>`
         : `<button class="btn muted" id="clearUser" style="margin-top:10px;font-size:12px">Not you? Log out</button>`
       }`;
-    // Scratch-pad PIN check is client-side and PER-ACCOUNT: the key is
-    // namespaced by user_id so two demo customers on this device can each
-    // hold their own 6-digit login PIN instead of sharing one global slot.
-    // Login uses sg_login_pin_<uid>; transfer confirmation checks the
-    // separate 4-digit sg_transfer_pin_<uid>.
-    initPinPad(6, pin => {
+    initPinPad(6, async pin => {
       if (!USER) { renderWelcome(); return; }
-      const saved = store.get("sg_login_pin_" + USER.user_id);
-      // Fresh browser/device: this account has never enrolled a PIN HERE
-      // (e.g. it was registered on another browser, whose localStorage is
-      // private per-browser). Enrolling PINs on first contact replaces the
-      // old dead-end where the correct PIN was rejected for "not being
-      // stored" -- a genuine cross-browser login failure.
-      if (!saved) {
-        store.set("sg_user", USER);
-        renderPinSetup();
+      let r;
+      try {
+        r = await api("/api/bank/verify-pin/", {
+          user_id: USER.user_id,
+          purpose: "login",
+          pin: pin,
+        });
+      } catch (e) {
+        renderPinLogin("Something went wrong. Please try again.");
         return;
       }
-      if (pin === saved) {
-        if (!USER) USER = store.get("sg_user");
-        // Only persist the active user once their login PIN is VERIFIED.
-        // This keeps a mid-login reload (phone entered, PIN not yet done)
-        // from persisting a half-finished login -- it returns to Welcome.
-        if (USER) store.set("sg_user", USER);
-        if (isSwitched()) {
-          // After entering PIN on switched device, show dashboard with honesty note.
-        }
+      if (r.error) { renderPinLogin(r.error); return; }
+      if (r.code === "pin_not_set") {
+        // Pre-existing account with no server-side PIN yet: establish it
+        // HERE, once, exactly like a brand-new signup (the one-time
+        // migration path -- there is no forgot/reset flow by design).
+        renderPinSetup("Set your PINs once so this account works on any browser or device.");
+        return;
+      }
+      if (r.verified) {
+        // Persist identity ONLY after the PIN verifies server-side (keeps a
+        // mid-login reload from resuming a half-finished login).
+        store.set("sg_user", USER);
         renderDashboard();
       }
       else {
@@ -814,16 +841,13 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     } else {
       document.getElementById("clearUser").onclick = () => {
         if (USER) {
-          // "Not you?" — this is a fresh visitor on OUR device: drop the
-          // active account's PINs so it can't be drifted into later.
-          localStorage.removeItem("sg_login_pin_" + USER.user_id);
-          localStorage.removeItem("sg_transfer_pin_" + USER.user_id);
+          // "Not you?" — this is a fresh visitor on OUR device. PINs live
+          // server-side, so there is no local secret to clear; just drop the
+          // persisted identity and go back to account creation.
+          localStorage.removeItem("sg_user");
         } else {
-          localStorage.removeItem("sg_login_pin");
-          localStorage.removeItem("sg_transfer_pin");
+          localStorage.removeItem("sg_user");
         }
-        localStorage.removeItem("sg_user");
-        localStorage.removeItem("sg_pin");
         USER = null;
         renderSignup();
       };
@@ -838,7 +862,6 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     const state = await refreshState();
     if (!state || state.error) {
       localStorage.removeItem("sg_user");
-      localStorage.removeItem("sg_pin");
       USER = null;
       renderSignup();
       return;
@@ -975,18 +998,34 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   }
 
   // ---- SCREEN: PIN Confirmation (before transfer) ----
-  // Uses the dedicated 4-digit sg_transfer_pin_<user_id>, independent from
-  // the 6-digit login PIN — matching how real Nigerian banking apps separate
-  // login credentials from transaction authorization.
+  // The 4-digit transfer PIN is verified SERVER-side (purpose "transfer")
+  // against the stored hash -- it is independent from the 6-digit login PIN,
+  // matching how real Nigerian banking apps separate login credentials from
+  // transaction authorization, but the browser never stores or compares it.
   let pendingTxn = null;
   function renderPinConfirm(txn, error) {
     pendingTxn = txn;
     appScreen.innerHTML = `
       ${error ? `<div class="banner block" style="margin-bottom:4px">${error}</div>` : ""}
       ${pinPadHTML(4, `Confirm transfer of ${naira(txn.amount)}`)}`;
-    initPinPad(4, pin => {
-      const saved = store.get("sg_transfer_pin_" + USER.user_id);
-      if (pin === saved) { submitTransfer(pendingTxn); }
+    initPinPad(4, async pin => {
+      let r;
+      try {
+        r = await api("/api/bank/verify-pin/", {
+          user_id: USER.user_id,
+          purpose: "transfer",
+          pin: pin,
+        });
+      } catch (e) {
+        renderPinConfirm(txn, "Something went wrong. Please try again.");
+        return;
+      }
+      if (r.error) { renderPinConfirm(txn, r.error); return; }
+      if (r.code === "pin_not_set") {
+        renderPinSetup("Set your transfer PIN once so this account works on any browser or device.");
+        return;
+      }
+      if (r.verified) { submitTransfer(pendingTxn); }
       else { renderPinConfirm(txn, "Incorrect PIN. Try again."); }
     });
   }
@@ -1275,8 +1314,8 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   applyDeviceMode();
   // Login-first always: on load the customer sees the Welcome screen where
   // they can either log in (enter phone -> PIN) or create a new account.
-  // Nothing is auto-resumed from localStorage, so stale identity/PIN state
-  // from a previous session can never dump a visitor into a PIN pad.
+  // Nothing is auto-resumed from localStorage, so stale identity from a
+  // previous session can never dump a visitor into a PIN pad.
   if (isSwitched()) {
     // Preserve the "switched device" demo: it needs its own honest banner.
     renderPinLogin();
