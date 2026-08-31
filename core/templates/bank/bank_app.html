@@ -654,12 +654,18 @@ _</div>
     _authenticated = false;
     clearTimeout(_inactivityTimer);
     startKeystrokeSession();
+    const switchedBanner = isSwitched()
+      ? `<div class="banner challenge" style="margin-top:10px">
+           Signed in elsewhere &mdash; you are on an unfamiliar (second) device.
+         </div>`
+      : "";
     appScreen.innerHTML = `
       <div style="text-align:center;margin:10px 0 6px">
         <div class="logo-mark" style="width:52px;height:52px;border-radius:14px;font-size:22px;margin:0 auto 10px">SG</div>
         <div style="font-size:19px;font-weight:800;letter-spacing:-.3px">Session<span style="color:var(--accent)">Guard</span> Bank</div>
         <div style="font-size:13px;color:var(--muted);margin-top:4px">Bank anywhere, anytime &mdash; secure by design</div>
       </div>
+      ${switchedBanner}
       ${error ? `<div class="banner block" style="margin-top:10px">${error}</div>` : ""}
       <div style="margin-top:12px">
         <label class="lbl">Phone number</label>
@@ -668,7 +674,12 @@ _</div>
       </div>
       <hr style="border-color:var(--border);width:100%;margin-top:14px">
       <label class="lbl" style="text-align:center;display:block">New to SessionGuard Bank?</label>
-      <button class="btn secondary" id="wlCreate" style="margin-top:6px">Create an account</button>`;
+      <button class="btn secondary" id="wlCreate" style="margin-top:6px">Create an account</button>
+      <hr style="border-color:var(--border);width:100%;margin-top:14px">
+      <label class="lbl" style="text-align:center;display:block">Testing a different device?</label>
+      <button class="btn muted" id="wlSwitchDevice" style="margin-top:6px;font-size:12px">
+        ${isSwitched() ? "Switch back to my original device" : "Simulate signing in on my second device"}
+      </button>`;
     wireWelcome();
   }
 
@@ -691,6 +702,17 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     }
     if (document.getElementById("wlCreate")) {
       document.getElementById("wlCreate").onclick = () => renderSignup();
+    }
+    const switchBtn = document.getElementById("wlSwitchDevice");
+    if (switchBtn) {
+      switchBtn.onclick = () => {
+        // Toggle the simulated device, then re-render the Welcome screen so
+        // the banner + button label reflect the new state. The switch only
+        // touches the device fingerprint (see doSwitchDevice), so the phone
+        // number stays the gatekeeper: re-entering it + PIN authenticates the
+        // SAME account, now scored against the new/unfamiliar fingerprint.
+        if (isSwitched()) { doSwitchBack(); } else { doSwitchDevice(); }
+      };
     }
   }
 
@@ -1324,16 +1346,14 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   // ==================== BOOT ====================
   ensureDevices();
   applyDeviceMode();
-  // Login-first always: on load the customer sees the Welcome screen where
+  // Login-first ALWAYS: on load the customer sees the Welcome screen where
   // they can either log in (enter phone -> PIN) or create a new account.
-  // Nothing is auto-resumed from localStorage, so stale identity from a
-  // previous session can never dump a visitor into a PIN pad.
-  if (isSwitched()) {
-    // Preserve the "switched device" demo: it needs its own honest banner.
-    renderPinLogin();
-  } else {
-    renderWelcome();
-  }
+  // Nothing is auto-resumed from localStorage, so stale identity (or a
+  // leftover "switched device" flag) from a previous session can never dump
+  // a visitor into a bare PIN pad with no way back to the phone-number /
+  // create-account screen. The "switched device" state is still shown on the
+  // Welcome screen via its own honest banner + switch buttons.
+  renderWelcome();
 </script>
 </body>
 </html>
