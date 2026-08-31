@@ -686,6 +686,71 @@ class FraudLabel(models.Model):
         return f"Label for session {self.session_id}: {state}"
 
 
+class ConfirmedOutcome(models.Model):
+    """
+    A HUMAN-confirmed outcome for a previously-scored live/demo session.
+
+    This is the ground truth behind the "the model keeps learning" story.
+    After the system returns a verdict (approve/challenge/block), a reviewer
+    (judge / bank analyst) inspects the event and records what it ACTUALLY
+    was: a real fraud attempt, or a genuine customer. Only confirmed outcomes
+    are folded back into the next ML retrain.
+
+    Deliberately separate from ``FraudLabel``: FraudLabel is the SYNTHETIC
+    training dataset; ConfirmedOutcome is REAL observed-and-confirmed traffic.
+    Keeping them apart (as with FraudLabel) makes label leakage structurally
+    impossible -- the live scoring path never reads either table.
+
+    ``confirmed_attack`` True means the reviewer confirmed this was a real
+    attack; False means a genuine, legitimate session. The scale of the
+    imprecision is ours to defend: it is exactly as trustworthy as the human
+    confirming it, which is the honest framing for a demo.
+    """
+
+    # One review per session, anchored by the session's own PK.
+    session = models.OneToOneField(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="confirmed_outcome",
+        help_text="The scored session whose outcome a human has confirmed.",
+    )
+
+    confirmed_attack = models.BooleanField(
+        default=False,
+        help_text=(
+            "True = reviewer confirmed this was a real fraud attempt; "
+            "False = confirmed a genuine, legitimate session."
+        ),
+    )
+
+    # Where the reviewer stood when confirming (for demo transparency).
+    source = models.CharField(
+        max_length=16,
+        default="demo",
+        choices=[("demo", "Demo Control Room"), ("admin", "Django admin")],
+        help_text="How / where the outcome was confirmed.",
+    )
+
+    # Who/what confirmed it. Free text so a judge's / analyst's note is kept
+    # in the audit trail without coupling to an auth model (the project
+    # deliberately does not use Django auth for account holders).
+    confirmed_by = models.CharField(
+        max_length=120, blank=True, default="",
+        help_text="Free-text reviewer identifier (keep for the audit trail).",
+    )
+
+    confirmed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-confirmed_at"]
+
+    def __str__(self):
+        return (
+            f"ConfirmedOutcome({self.session_id} "
+            f"attack={self.confirmed_attack})"
+        )
+
+
 class RecipientDirectory(models.Model):
     """
     Account number -> display name mapping for the bank demo.

@@ -200,6 +200,27 @@ Self-contained vanilla HTML/CSS/JS: no build step, no dependencies.
     background: rgba(220,38,38,0.12); border: 1px solid var(--block);
     color: #fca5a5; font-size: 12.5px;
   }
+
+  /* ---------- confirm-outcome (the "model keeps learning" hook) ---------- */
+  .confirm-row {
+    margin: 0 18px 18px; padding: 12px 14px; border-radius: 10px;
+    background: #10233a; border: 1px solid var(--card-border);
+  }
+  .confirm-row > small {
+    display: block; color: var(--muted); font-size: 12px;
+    margin-bottom: 10px; line-height: 1.4;
+  }
+  .confirm-btn {
+    border: 1px solid var(--card-border); border-radius: 8px;
+    padding: 7px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: inherit; color: #0d1b2a; margin-right: 8px;
+  }
+  .confirm-btn.good   { background: var(--block); }
+  .confirm-btn.benign { background: var(--approve); }
+  .confirm-btn:hover { filter: brightness(1.1); }
+  .confirm-tally {
+    display: block; margin-top: 8px; font-size: 12px; color: var(--accent);
+  }
 </style>
 </head>
 <body>
@@ -345,7 +366,9 @@ ${data.customer_message}
   }
 
   // ---- RIGHT panel: technical detail for judges ------------------------
+  let LAST_SESSION = null;   // last scored session_id (for confirm-outcome)
   function renderJudge(data, rtMs) {
+    LAST_SESSION = data.session_id;
     const signals = (data.debug_signals || [])
       .map(s => `<tr><td>${s.code}</td><td>+${s.weight}</td></tr>`)
       .join("");
@@ -361,7 +384,34 @@ ${data.customer_message}
       ${signals ? `<table class="signals-table">
         <thead><tr><th>Triggered signal</th><th>Weight</th></tr></thead>
         <tbody>${signals}</tbody></table>` : ""}
-      <div class="rt-line">Response time: <b>${rtMs}ms</b> end-to-end (brief target: under a second)</div>`;
+      <div class="rt-line">Response time: <b>${rtMs}ms</b> end-to-end (brief target: under a second)</div>
+      <div class="confirm-row">
+        <small>What was this event REALLY? This becomes ground truth for the next ML retrain.</small>
+        <button class="confirm-btn good"     onclick="confirmOutcome(true)">&#10003; Confirmed fraud</button>
+        <button class="confirm-btn benign"   onclick="confirmOutcome(false)">&#10003; Confirmed genuine</button>
+        <span id="confirmTally" class="confirm-tally"></span>
+      </div>`;
+  }
+
+  async function confirmOutcome(confirmedAttack) {
+    if (!LAST_SESSION) return;
+    try {
+      const res = await fetch("/api/demo/confirm-outcome/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json",
+                   "X-CSRFToken": CSRF_TOKEN },
+        body: JSON.stringify({
+          session_id: LAST_SESSION,
+          confirmed_attack: confirmedAttack,
+        }),
+      });
+      const r = await res.json();
+      const tally = document.getElementById("confirmTally");
+      if (tally) tally.textContent =
+        `confirmed: ${r.confirmed_total} (${r.confirmed_attacks} fraud)`;
+    } catch (err) {
+      alert("Confirm failed: " + err);
+    }
   }
 
   // ---- network outage toggle -------------------------------------------

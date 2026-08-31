@@ -21,7 +21,9 @@ from core.bank_views import (
     BankAppView, bank_login, bank_lookup_account, bank_send_money,
     bank_set_pin, bank_signup, bank_state, bank_verify_pin,
 )
-from core.demo_views import ControlRoomView, demo_scenarios, toggle_offline
+from core.demo_views import (
+    ControlRoomView, confirm_outcome, demo_scenarios, toggle_offline,
+)
 from core.views import SessionEventView
 
 urlpatterns = [
@@ -35,6 +37,8 @@ urlpatterns = [
     path('api/demo/scenarios/', demo_scenarios, name='demo-scenarios'),
     path('api/demo/toggle-offline/', toggle_offline,
          name='demo-toggle-offline'),
+    path('api/demo/confirm-outcome/', confirm_outcome,
+         name='demo-confirm-outcome'),
     path('demo/', ControlRoomView.as_view(), name='control-room'),
     # --- Demo customer experience (bank app + USSD simulator) -----------
     path('bank/', BankAppView.as_view(), name='bank-app'),

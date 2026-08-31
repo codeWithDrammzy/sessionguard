@@ -54,7 +54,11 @@ import numpy as np  # noqa: E402
 from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.model_selection import train_test_split  # noqa: E402
 
-from core.models import BehavioralFeatures, FraudLabel  # noqa: E402
+from core.models import (  # noqa: E402
+    BehavioralFeatures,
+    ConfirmedOutcome,
+    FraudLabel,
+)
 
 SEED = 46  # fifth independent RNG stream (documented reproducibility)
 TEST_SIZE = 0.2
@@ -118,13 +122,27 @@ def build_dataset():
     """
     One pass over all BehavioralFeatures -> X, y, kinds.
 
-    y=1 strictly requires FraudLabel.is_attack=True; everything else
-    (including both anomaly categories) is y=0.
+    y=1 strictly requires FraudLabel.is_attack=True, OR a human-confirmed
+    attack via ConfirmedOutcome.confirmed_attack=True. A ConfirmedOutcome
+    with confirmed_attack=False pins its session to y=0. Everything else
+    (including both anomaly categories) defaults to y=0.
+
+    The ConfirmedOutcome override is the "the model keeps learning from real
+    observed traffic" hook: a reviewer confirms what a scored session ACTUALLY
+    was, and that ground truth folds into the next retrain. A confirmed
+    attack with no synthetic label lands in category "confirmed:attack";
+    a confirmed genuine session in "confirmed:benign".
     """
     labels = {
         row["session_id"]: row
         for row in FraudLabel.objects.values(
             "session_id", "is_attack", "attack_type", "is_legitimate_anomaly"
+        )
+    }
+    confirmed = {
+        row["session_id"]: row["confirmed_attack"]
+        for row in ConfirmedOutcome.objects.values(
+            "session_id", "confirmed_attack"
         )
     }
     X, y, kinds = [], [], []
@@ -133,8 +151,18 @@ def build_dataset():
     ).iterator(chunk_size=500):
         X.append(features_to_vector(f))
         kind = _category_for(f, labels)
+        if f.session_id in confirmed:
+            # Human-confirmed ground truth trumps the synthetic default.
+            if confirmed[f.session_id]:
+                kind = "confirmed:attack"
+            else:
+                kind = "confirmed:benign"
         kinds.append(kind)
-        y.append(1 if kind.startswith("attack:") else 0)
+        y.append(
+            1
+            if kind.startswith("attack:") or kind == "confirmed:attack"
+            else 0
+        )
     return np.array(X), np.array(y), kinds
 
 
@@ -169,6 +197,13 @@ def train_and_evaluate():
     print(line)
     print(f"Dataset                       : {len(X)} rows, "
           f"{int(y.sum())} positives (<{100 * y.mean():.1f}% class balance)")
+    n_conf = ConfirmedOutcome.objects.count()
+    n_conf_attack = ConfirmedOutcome.objects.filter(
+        confirmed_attack=True
+    ).count()
+    print(f"Confirmed-outcome folds       : {n_conf} "
+          f"({n_conf_attack} attack / {n_conf - n_conf_attack} benign) "
+          f"from live demo reviews")
 
     # --- Stratified 80/20 split ----------------------------------------------
     X_train, X_test, y_train, y_test, k_train, k_test = train_test_split(
@@ -304,6 +339,17 @@ def _load_bundle():
             )
         _BUNDLE_CACHE.append(joblib.load(MODEL_PATH))
     return _BUNDLE_CACHE[0]
+
+
+def reload_bundle():
+    """
+    Drop the in-process model cache so the NEXT predict_risk() call loads the
+    freshly-retrained bundle. Called by the retrain management command so a
+    running server adopts the updated model WITHOUT a process restart. Safe to
+    call any time; re-loading happens lazily on the next scoring request.
+    """
+    _BUNDLE_CACHE.clear()
+    return bool(_BUNDLE_CACHE)  # unchanged signature (always [])
 
 
 def predict_risk(features):
