@@ -92,6 +92,23 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   }
   .theme-toggle:hover { background: var(--accent-dim); border-color: var(--accent); }
 
+  /* Small, always-visible device toggle (top-right, next to theme) */
+  .device-toggle {
+    position: absolute; right: 46px; top: 50%; transform: translateY(-50%);
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 999px; height: 30px; padding: 0 12px;
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text);
+    font-family: inherit; transition: background .15s, border-color .15s;
+    box-shadow: var(--shadow-sm); white-space: nowrap;
+  }
+  .device-toggle:hover { border-color: var(--accent); background: var(--accent-dim); }
+  .device-toggle .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--online); flex: none;
+  }
+  .device-toggle.switched .dot { background: var(--challenge); }
+
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; }
   @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
 
@@ -338,6 +355,9 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
     <h1>Session<span>Guard</span> Bank</h1>
     <p>Bank anywhere, anytime &mdash; secure by design</p>
     <button class="theme-toggle" id="themeToggle" aria-label="Toggle light/dark mode" title="Toggle light/dark mode"></button>
+    <button class="device-toggle" id="deviceToggle"
+            aria-label="Toggle simulated device"
+            title="Simulate logging in on a second device"><span class="dot"></span><span id="deviceToggleTxt">My device</span></button>
   </header>
 
   <div class="cols">
@@ -571,6 +591,7 @@ _</div>
     localStorage.removeItem("sg_user");
     USER = null;
     applyDeviceMode();
+    updateDeviceToggle();
     renderWelcome();
   }
   function doSwitchBack() {
@@ -591,6 +612,7 @@ _</div>
     localStorage.removeItem("sg_user");
     USER = null;
     applyDeviceMode();
+    updateDeviceToggle();
     renderWelcome();
   }
 
@@ -674,12 +696,7 @@ _</div>
       </div>
       <hr style="border-color:var(--border);width:100%;margin-top:14px">
       <label class="lbl" style="text-align:center;display:block">New to SessionGuard Bank?</label>
-      <button class="btn secondary" id="wlCreate" style="margin-top:6px">Create an account</button>
-      <hr style="border-color:var(--border);width:100%;margin-top:14px">
-      <label class="lbl" style="text-align:center;display:block">Testing a different device?</label>
-      <button class="btn muted" id="wlSwitchDevice" style="margin-top:6px;font-size:12px">
-        ${isSwitched() ? "Switch back to my original device" : "Simulate signing in on my second device"}
-      </button>`;
+      <button class="btn secondary" id="wlCreate" style="margin-top:6px">Create an account</button>`;
     wireWelcome();
   }
 
@@ -702,17 +719,6 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     }
     if (document.getElementById("wlCreate")) {
       document.getElementById("wlCreate").onclick = () => renderSignup();
-    }
-    const switchBtn = document.getElementById("wlSwitchDevice");
-    if (switchBtn) {
-      switchBtn.onclick = () => {
-        // Toggle the simulated device, then re-render the Welcome screen so
-        // the banner + button label reflect the new state. The switch only
-        // touches the device fingerprint (see doSwitchDevice), so the phone
-        // number stays the gatekeeper: re-entering it + PIN authenticates the
-        // SAME account, now scored against the new/unfamiliar fingerprint.
-        if (isSwitched()) { doSwitchBack(); } else { doSwitchDevice(); }
-      };
     }
   }
 
@@ -1306,6 +1312,24 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     applyTheme();
   };
   applyTheme();
+
+  // ==================== DEVICE TOGGLE (top-right, always visible) ======
+  // Reflects the current simulated-device state on the small header button.
+  function updateDeviceToggle() {
+    const btn = document.getElementById("deviceToggle");
+    const txt = document.getElementById("deviceToggleTxt");
+    if (!btn || !txt) return;
+    const switched = isSwitched();
+    btn.classList.toggle("switched", switched);
+    txt.textContent = switched ? "Second device" : "My device";
+  }
+  document.getElementById("deviceToggle").addEventListener("click", () => {
+    // Toggle the simulated device (see doSwitchDevice / doSwitchBack): only
+    // the fingerprint changes, so re-entering the phone + PIN after switching
+    // scores the SAME account against the new/unfamiliar device.
+    if (isSwitched()) { doSwitchBack(); } else { doSwitchDevice(); }
+  });
+  updateDeviceToggle();
 
   // ==================== LOGOUT + INACTIVITY TIMEOUT ====================
   const SESSION_TIMEOUT_MS = 180000; // 3 minutes of inactivity
