@@ -22,3 +22,6 @@ Thumbs.db
 # Logs and scratch output.
 *.log
 scratch/
+
+# Offline-resync spool -- regenerated/mutated by the demo & scoring path.
+offline_queue.jsonl

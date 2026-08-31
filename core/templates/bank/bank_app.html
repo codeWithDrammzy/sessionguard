@@ -613,7 +613,19 @@ _</div>
     if (!dots || !grid) return;
     dots.innerHTML = Array.from({length}, () =>
       `<div class="pin-dot"></div>`).join("");
-    const keys = ["1","2","3","4","5","6","7","8","9","","0","del"];
+    // Anti-shoulder-surf keypad: shuffle the digit positions EVERY time the
+    // pad renders, so an observer watching tap coordinates cannot reconstruct
+    // the PIN's digit sequence from hand/finger position. The PIN itself is
+    // unchanged (digits stay bound to their data-k value); only their on-screen
+    // locations move. del keeps its slot so its position is predictable.
+    // The keystroke rhythm stream still captures tap TIMING regardless of
+    // layout, so scoring is unaffected by the shuffle.
+    const digits = ["1","2","3","4","5","6","7","8","9","0"];
+    for (let i = digits.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [digits[i], digits[j]] = [digits[j], digits[i]];
+    }
+    const keys = [...digits.slice(0, 9), "", digits[9], "del"];
     grid.innerHTML = keys.map(k => {
       if (k === "") return `<div class="pin-key" style="visibility:hidden"></div>`;
       if (k === "del") return `<div class="pin-key del" data-k="del">&larr;</div>`;
