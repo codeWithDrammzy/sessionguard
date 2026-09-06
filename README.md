@@ -1,0 +1,108 @@
+# SessionGuard
+
+**Real-time behavioural detection of account takeover — mobile app and USSD banking.**
+
+Built for the ICSC 2026 Universities Hackathon — Track A: Financial Services & Digital Payments — Challenge: *Spotting Account Takeover from Behaviour*. Team: **BlueTeam**.
+
+---
+
+## The Problem
+
+Most banking security checks one thing: did you enter the correct PIN or code? Once a PIN is phished, a SIM is swapped, or a criminal logs in from a new device, that check has nothing left to catch them with. By the time a fraudulent transfer clears, the money is gone.
+
+SessionGuard adds a second question to every login and transfer: **does this still look like this specific customer**, based on their own history — not a generic profile?
+
+## How It Works
+
+Every customer has a behavioural profile built from their own past activity: typical login hours, typical transfer amounts, regular recipients, registered devices/SIM, and typing rhythm. Every new session is scored against **that customer's own baseline**, using three layers:
+
+1. **Rules engine** (`core/rules_engine.py`) — a transparent, hand-written checklist. Each warning sign adds fixed points; the total is banded into `APPROVE` (0–29), `CHALLENGE` (30–59), or `BLOCK` (60+).
+2. **Machine learning model** (`core/ml_model.py`) — a Logistic Regression classifier trained on 11 behavioural features, chosen deliberately for interpretability. It independently learned that a first-time device is the single strongest predictor of takeover — exactly the signal that catches a "patient" attacker who changes only their device while keeping everything else normal.
+3. **Hybrid scorer** (`core/hybrid_scorer.py`) — the final score is the higher of the two layers. A **fairness override** then checks: has only the hardware changed, while amount, time, and location remain normal? If so, a `BLOCK` is automatically softened to `CHALLENGE` — a genuine customer (e.g. one who lost their phone) is never locked out, while an actual attacker is still stopped from moving money without confirmation.
+
+Full architecture detail is in [`SessionGuard_Architecture.docx`](./SessionGuard_Architecture.docx) (or the equivalent doc in this repo) and the technical write-up submitted alongside this project.
+
+## Key Results
+
+| Scorer | Precision | Recall | FPR |
+|---|---|---|---|
+| Rules only | 100.0% | 59.5% | 0.0% |
+| ML only (held-out test set) | 100.0% | 87.5% | 0.0% |
+| Hybrid (full dataset, illustrative) | 100.0% | 59.5% (see note) | 0.0% |
+
+**Note:** operational catch rate (block **or** challenge) on all 42 known attacks is 100% — no attack is silently approved. Across all 10 legitimate anomalies (family device sharing, genuine SIM-swap recovery), zero result in a hard block.
+
+**Honestly stated limitation:** the ML component alone has a genuine held-out evaluation; the full hybrid pipeline has so far been evaluated on the complete dataset it partly trained on, not a strict held-out split. This is our acknowledged next step, not a hidden gap. See the technical write-up for the full list of known limitations.
+
+## Real-World Conditions Handled
+
+- **Power/network cuts** — falls back to a local, cached-profile check capped at `CHALLENGE` (never a hard block on an unverifiable guess), then queues the event for full re-scoring once connectivity returns.
+- **USSD / feature phones** — the full pipeline runs on `*737#` sessions too, where no device fingerprint exists; SIM identity and location carry more weight there instead.
+- **Non-technical customers** — every `CHALLENGE`/`BLOCK` comes with a plain-English, two-reason explanation, never a silent block.
+- **Shoulder-surfing** — the on-screen PIN keypad shuffles its 1–9 digits on every render.
+- **Continuous improvement** — a human-confirmed feedback loop (`ConfirmedOutcome` model + `python manage.py retrain_model`) folds real verdicts back into training.
+
+## Project Structure
+
+```
+sessionguard/
+├── core/
+│   ├── feature_engine.py       # Computes behavioural signals from raw session data
+│   ├── rules_engine.py         # Hand-written scoring checklist
+│   ├── ml_model.py             # LogisticRegression training + inference
+│   ├── hybrid_scorer.py        # Combines rules + ML, applies fairness override
+│   ├── explanation.py          # Plain-language customer explanations
+│   ├── offline_fallback.py     # Degraded-mode scoring + resync queue
+│   ├── models.py               # Data model (BankUser, Session, Transaction, etc.)
+│   ├── views.py / bank_views.py / demo_views.py   # API endpoints
+│   ├── management/commands/    # reset_demo, retrain_model
+│   └── templates/
+│       ├── bank/bank_app.html      # Mobile app + USSD simulator
+│       └── demo/control_room.html  # Judge/analyst dashboard
+├── dataset_generator/          # Deterministic synthetic data pipeline (seeded)
+├── smoke_test_api.py           # Manual regression check
+└── DEMO_SCRIPT.md              # Live demo walkthrough
+```
+
+## Data
+
+All data is **synthetic**, generated by our own deterministic, seeded pipeline — no real customer data was used anywhere, per competition rules. Four independently-seeded stages:
+
+1. `generate_users.py` (seed 42) — 250 fictional customer profiles
+2. `generate_sessions.py` (seed 43) — ~3 weeks of baseline session history per customer
+3. `inject_attacks.py` (seed 44) — 42 attacks across 3 archetypes (credential theft, patient low-and-slow, SIM-swap takeover)
+4. `inject_legitimate_anomalies.py` (seed 45) — 10 legitimate edge cases (family shared phone, genuine SIM-swap recovery)
+
+Fully reproducible — running the same seeds regenerates an identical dataset.
+
+## Running It Locally
+
+```bash
+python -m venv venv
+source venv/bin/activate  # or venv\Scripts\activate on Windows
+pip install -r requirements.txt
+
+python manage.py migrate
+python manage.py reset_demo      # resets to a clean 250-customer demo snapshot
+python manage.py runserver
+```
+
+Then visit:
+- `http://127.0.0.1:8000/bank/` — the mobile app / USSD simulator
+- `http://127.0.0.1:8000/demo/` — the Control Room judge dashboard
+
+Built entirely with free, open-source tools — Python, Django, Django REST Framework, scikit-learn, SQLite. No paid services or infrastructure required.
+
+## Known Limitations (Stated Honestly)
+
+- The full hybrid pipeline has not yet been evaluated on a strict held-out split (only the ML component has a true unseen-data result).
+- Only 42 labelled attacks exist in the training dataset — enough to demonstrate the approach, not yet a statistically rigorous sample.
+- The step-up confirmation step is simulated (accepts any well-formed code) to demonstrate the flow; a production system would connect a real SMS/USSD OTP provider, ideally on a channel independent of the primary device.
+- New customers are scored "blind" on typing rhythm until roughly 5 prior sessions exist.
+- No automated test suite yet — only a manual smoke test (`smoke_test_api.py`).
+
+See the full technical write-up for the complete limitations discussion and what we'd do next for each.
+
+## Team
+
+**BlueTeam** — ICSC 2026 Universities Hackathon, Track A.
