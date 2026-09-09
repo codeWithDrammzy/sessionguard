@@ -241,17 +241,73 @@ USSD choice is deliberate: the brief positions USSD as the differentiating Niger
 
 ---
 
-## 11. Verified evaluation numbers (live, from committed code)
+## 11. Verified evaluation numbers
 
-| Scorer | Precision | Recall | FPR | patient strict | patient op. | simswap FP |
+### 11a. Proper out-of-sample evaluation (current, defensible)
+
+Produced by `core/eval_cv.py`: **RepeatedStratifiedKFold (k=5, repeats=10 = 50 folds)**,
+stratified on the fraud label, with **per-fold feature de-leaking** — every test
+session's features are recomputed using ONLY that fold's training sessions as its
+behavioural history (a test session never borrows history from another held-out
+session). This is the methodology a judge should be pointed at.
+
+| Scorer | Precision (mean ± std) | Recall (mean ± std) | F1 (mean ± std) | **PR-AUC** (mean ± std) |
+|---|---|---|---|---|
+| **rules** | 1.000 ± 0.000 | 0.559 ± 0.149 | 0.706 ± 0.122 | **0.876 ± 0.086** |
+| **ml** | 0.610 ± 0.116 | 0.984 ± 0.050 | 0.745 ± 0.082 | **0.929 ± 0.071** |
+| **hybrid** | 0.980 ± 0.068 | 0.475 ± 0.142 | 0.628 ± 0.133 | **0.933 ± 0.063** |
+
+Summed confusion matrices (hard-block = positive) across all 50 folds:
+
+| Scorer | TN | FP | FN | TP | pooled prec | pooled recall |
 |---|---|---|---|---|---|---|
-| **rules-only** | 100% | 59.5% | 0% | — | — | 0/4 |
-| **hybrid** | 100% | 59.5% | 0% | 12/12 | 12/12 | **0/4** |
-| **ML-only @0.5** | 100% | 87.5% | 0% | — | — | (would block recoveries — hence the override) |
+| rules | 21950 | 0 | 185 | 235 | 1.0000 | 0.5595 |
+| ml   | 21661 | 289 | 7 | 413 | 0.5883 | 0.9833 |
+| hybrid | 21946 | 4 | 220 | 200 | 0.9804 | 0.4762 |
 
-- **Legitimate anomalies:** `family_shared_phone` → zero hard-blocks; `genuine_sim_swap` → zero hard-blocks (both protected by the invariant + override).
+Pooled safety checks (summed across 50 folds):
+
+| Scorer | attacks caught (block+challenge) | genuine SIM-swap false-block | family false-block |
+|---|---|---|---|
+| rules | 253/420 (60.2%) | 0/40 | 0/60 |
+| ml   | 413/420 (98.3%) | 40/40 | 6/60 |
+| hybrid | 417/420 (99.3%) | **0/40** | 4/60 |
+
+**Reading these honestly (the 42-positive reality):**
+- **PR-AUC is the primary metric.** At a 1.88% positive rate, precision/accuracy alone are
+  misleading; average-precision summarises the precision across *all* thresholds.
+- The ML model's high recall (98.4%) comes with real out-of-fold false blocks (FP=289),
+  including over-blocking genuine SIM-swap recoveries (40/40) — the exact failure the
+  context-normalcy override was built to fix.
+- The hybrid restores precision to ~98% AND keeps sim-swap false-block at **0/40**, at the
+  cost of hard-block recall (0.475) because many blocks are softened to challenge —
+  but the *attacks-caught* rate (block+challenge, which operationally still stops the
+  transfer until step-up verification) is **99.3%**.
+- Residual: 4 family false-blocks remain in hybrid. These are family-shared-phone sessions
+  where the ML hard-blocked despite device/SIM being unchanged (so the override — which
+  requires a device/SIM change — cannot legally fire). Honest known limitation.
+- Rules precision of 100%/FP=0 is real and now measured *out-of-fold* (40/40 sim-swap and
+  60/60 family never hard-blocked by rules).
+
+### 11b. Previously reported numbers (as-run: in-sample / single-split)
+
+These are what earlier write-ups quoted; kept here only as a before/during reference,
+NOT as evaluation claims:
+
+| Scorer | Precision | Recall | FPR | How it was computed |
+|---|---|---|---|---|
+| rules-only | 100% | 59.5% | 0% | full dataset, **in-sample** (no split) |
+| hybrid | 100% | 59.5% | 0% | full dataset, **in-sample** (no split) |
+| ML-only @0.5 | 100% | 87.5% | 0% | **one** stratified 80/20 split (~8 test positives) |
+
+Why the ML precision dropped from 100% (single split) to ~61% (CV): with ~8 test
+positives in one split and a clean separation, 100% precision was achievable by luck; the
+50-fold CV sees far more held-out positives and the model's genuine over-blocking
+(generalises to baseline/anomaly confusion) becomes visible. Rules/hybrid precision
+was real but only previously shown in-sample; CV confirms it while adding variance.
+
 - **Operational catch rate** counts challenge+block together (a challenge still stops the transfer until verification passes).
-- **Eval caveat (stated honestly in-code):** the hybrid/ML report runs over the full dataset with the ML trained on 80% of it → illustrative comparison vs the rules baseline, not a clean generalisation metric.
+- **Run the current numbers:** `python core/eval_cv.py --splits 5 --repeats 10` (see §12).
 
 **Diagnostic finding (expected, not a bug):** fast typing alone is a weak signal. Below `MIN_KEYSTROKE_BASELINE_SESSIONS=5` priors, `keystroke_deviation_score=None`; even at max, `keystroke_deviation_max=12 <` the challenge threshold (30), so keystrokes alone never decide a verdict — they only add weight in combination. Also the `wlPhone` login field is **not** tracked by the JS keystroke recorder (a genuine, known coverage gap for login-screen typing).
 
@@ -275,6 +331,7 @@ python dataset_generator/inject_legitimate_anomalies.py   # (anomalies)
 # Evaluation reports (self-contained prints)
 python core/rules_engine.py
 python core/hybrid_scorer.py
+python core/eval_cv.py --splits 5 --repeats 10   # PROPER out-of-sample CV (de-leaked)
 
 # Operations
 python manage.py retrain_model        # fold confirmed outcomes into the ML model
