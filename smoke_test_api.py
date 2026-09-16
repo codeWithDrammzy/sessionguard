@@ -44,24 +44,18 @@ def cleanup_previous_runs():
     """Delete sessions left by earlier smoke runs (cascades to their
     transactions + feature rows) so velocity/history stay pristine.
 
-    Two sweeps:
-      * marker sweep -- anything carrying SMOKE_TOWER (this script's own
-        rows from previous runs);
-      * orphan sweep -- dev-DB safety net for rows written by crashed
-        pre-marker runs: sessions stamped today that carry no FraudLabel.
-        Genuine dataset rows all live inside the generated 21-day window,
-        so a same-day unlabelled row can only be API-test debris.
+    Whitelist-only, mirroring core.demo_scenarios._purge_previous_demo_traffic:
+    only sessions carrying one of the reserved debris marker tower IDs (this
+    script's SMOKE_TOWER, plus the Control Room/offline markers) are removed.
+    The former same-day-unlabelled 'orphan' sweep was dropped because the
+    generated 21-day window legitimately places seeded baseline sessions on
+    "today", and that heuristic was silently deleting those real rows.
     """
-    start_of_today = timezone.now().replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    stale = Session.objects.filter(ip_or_cell_tower_id=SMOKE_TOWER)
-    orphans = Session.objects.filter(
-        timestamp__gte=start_of_today
-    ).exclude(fraud_label__isnull=False)
-    n = stale.count() + orphans.count()
+    from core.demo_scenarios import DEBRIS_TOWERS
+
+    stale = Session.objects.filter(ip_or_cell_tower_id__in=DEBRIS_TOWERS)
+    n = stale.count()
     if n:
-        orphans.delete()
         stale.delete()
         print(f"Cleanup: removed {n} session(s) from previous smoke runs.")
 

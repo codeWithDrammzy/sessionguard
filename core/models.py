@@ -322,7 +322,7 @@ class Transaction(models.Model):
     )
 
     # When the transfer was attempted. Used for velocity calculations
-    # (transfers per 5-minute window) and burst detection.
+    # (transfers per 2-minute window) and burst detection.
     # NOTE: a PLAIN field with default=now, NOT auto_now_add: the dataset
     # generators must be able to write a transaction's true timestamp (its
     # session's time). auto_now_add made bulk_create stamp every row of a
@@ -487,11 +487,13 @@ class BehavioralFeatures(models.Model):
         help_text="Transfer targeted a brand-new beneficiary.",
     )
 
-    # Number of transactions by this user in the rolling 5-minute window.
-    # High values indicate rapid-fire draining behaviour.
+    # Number of transactions by this user in the rolling 2-minute window.
+    # High values indicate rapid-fire draining behaviour. (Field NAME
+    # "velocity_count_5min" is historical -- kept so migrations and the
+    # trained ML bundle stay compatible; the actual window is VELOCITY_WINDOW.)
     velocity_count_5min = models.PositiveIntegerField(
         default=0,
-        help_text="Transactions by this user in the last 5 minutes.",
+        help_text="Transactions by this user in the last 2 minutes.",
     )
 
     # DELIBERATE DESIGN CHOICE:

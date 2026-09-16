@@ -112,6 +112,11 @@ _INTERNAL_OVERRIDE_NOTE = (
     "behaviour, so verification was requested instead of a hard block."
 )
 
+_KEYSTROKE_OVERRIDE_NOTE = (
+    "Note: typing rhythm was the only abnormal signal in this session, so "
+    "verification was requested instead of a hard block."
+)
+
 
 def _join_reasons(phrases):
     """
@@ -140,7 +145,12 @@ def explain_decision(decision):
     a generic-but-honest sentence rather than crashing or emitting "".
     """
     verdict = decision.verdict
-    override_fired = bool(getattr(decision, "context_override_applied", False))
+    context_override_fired = bool(
+        getattr(decision, "context_override_applied", False)
+    )
+    keystroke_override_fired = bool(
+        getattr(decision, "keystroke_override_applied", False)
+    )
     reason_codes = [r["code"] for r in decision.triggered_reasons]
     # Degraded mode (offline_fallback): the decision was made with a cached
     # snapshot only. Customers get an honest transparency clause; the code
@@ -167,6 +177,7 @@ def explain_decision(decision):
         visible = [
             r for r in decision.triggered_reasons
             if r["code"] not in ("context_normal_override",
+                                 "keystroke_override",
                                  "offline_degraded_check")
         ]
         # Ranking: concrete rule causes lead (by weight); the ML phrase is a
@@ -206,8 +217,10 @@ def explain_decision(decision):
                 "and release the transfer."
             )
 
-    if override_fired:
+    if context_override_fired:
         return customer, _INTERNAL_OVERRIDE_NOTE
+    if keystroke_override_fired:
+        return customer, _KEYSTROKE_OVERRIDE_NOTE
     return customer
 
 

@@ -20,7 +20,7 @@ import os
 import re
 import sys
 import uuid
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 if __name__ == "__main__":
     PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,6 +50,17 @@ from core.views import run_scoring_pipeline  # noqa: E402
 # exactly like an unclaimed OTP expiring. Bounded to stay honest about it.
 CHALLENGE_HOLDS = OrderedDict()
 HOLD_LIMIT = 200
+
+# Deposits (balance top-ups) are NOT scored transactions -- money coming in
+# is not an account-takeover risk -- so they live as a lightweight in-memory
+# ledger rather than Transaction/Session rows (a bare Session would pollute
+# velocity/device/keystroke history for the fraud features). The BALANCE
+# itself persists on BankUser.balance; only these history entries are
+# volatile across a server restart. Bounded like CHALLENGE_HOLDS.
+DEPOSIT_RECORDS = OrderedDict()  # user_id(str) -> deque[{reference, amount, ts}]
+DEPOSIT_HISTORY_PER_USER = 12
+# Demo sanity cap so nobody can type absurd numbers into the demo UI.
+DEPOSIT_MAX = Decimal("10000000.00")
 
 
 def _phone_variants(raw) -> set:
@@ -88,8 +99,9 @@ def _recent_activity(user, limit=8):
             .filter(session__user=user)
             .exclude(reference="", outcome="approve")  # hide legacy rows
             .order_by("-timestamp")[:limit])
-    return [
-        {
+    entries = [
+        (t.timestamp, {
+            "kind": "transfer",
             "reference": t.reference or "-",
             "amount": str(t.amount),
             "recipient": t.recipient_id,
@@ -97,9 +109,24 @@ def _recent_activity(user, limit=8):
             "channel": t.session.channel,
             "time": timezone.localtime(t.timestamp)
                               .strftime("%d %b %H:%M"),
-        }
+        })
         for t in txns
     ]
+    # Merge any in-memory deposits for this customer (funding a demo account
+    # is not a scored activity, so it never appears as a Transaction row).
+    for rec in DEPOSIT_RECORDS.get(str(user.user_id), ()):
+        entries.append((rec["ts"], {
+            "kind": "deposit",
+            "reference": rec["reference"],
+            "amount": str(rec["amount"]),
+            "recipient": "Account top-up",
+            "outcome": "deposit",
+            "channel": "app",
+            "time": timezone.localtime(rec["ts"])
+                             .strftime("%d %b %H:%M"),
+        }))
+    entries.sort(key=lambda e: e[0], reverse=True)
+    return [e[1] for e in entries[:limit]]
 
 
 @api_view(["POST"])
@@ -157,6 +184,15 @@ def bank_login(request):
     if not phone:
         return Response({"error": "Enter your phone number."},
                         status=drf_status.HTTP_400_BAD_REQUEST)
+    # Account/login identifier is a 10-digit NUBAN number (see signup).
+    # Compare on the digits-only form, exactly like bank_signup, so letters
+    # or extra characters are an explicit 400 rather than a silent match.
+    if not re.fullmatch(r"\d{10}", phone):
+        return Response(
+            {"error": "Phone number must be exactly 10 digits (your bank "
+                      "account number, e.g. 8012345678)."},
+            status=drf_status.HTTP_400_BAD_REQUEST,
+        )
     user = BankUser.objects.filter(
         phone_number__in=_phone_variants(phone)).first()
     if user is None:
@@ -337,6 +373,16 @@ def bank_send_money(request):
     }
     txn_payload = request.data.get("transaction")
     if txn_payload:
+        recipient = txn_payload.get("recipient_id") or ""
+        # Server-side NUBAN check on the ledger endpoint (the frontend and
+        # lookup-account already enforce it, but a direct API call must not
+        # be able to store an arbitrary beneficiary). App + USSD send the
+        # internal "BNF-" prefix followed by the 10-digit account number.
+        if not re.fullmatch(r"BNF-\d{10}", str(recipient)):
+            return Response({
+                "error": "recipient_id must be a 10-digit NUBAN account "
+                         "number (internal form BNF- followed by 10 digits).",
+            }, status=drf_status.HTTP_400_BAD_REQUEST)
         data["transaction"] = {
             "amount": str(txn_payload["amount"]),
             "recipient_id": txn_payload["recipient_id"],
@@ -438,6 +484,75 @@ def bank_send_money(request):
         result["balance"] = str(user.balance)  # balance-check session
 
     return Response(result, status=drf_status.HTTP_200_OK)
+
+
+def _record_deposit(user, reference, amount):
+    """Append a deposit to the in-memory history ledger, bounded per user."""
+    key = str(user.user_id)
+    records = DEPOSIT_RECORDS.setdefault(key, deque())
+    records.append({
+        "reference": reference,
+        "amount": amount,
+        "ts": timezone.now(),
+    })
+    while len(records) > DEPOSIT_HISTORY_PER_USER:
+        records.popleft()
+    while len(DEPOSIT_RECORDS) > HOLD_LIMIT:
+        DEPOSIT_RECORDS.popitem(last=False)
+
+
+@api_view(["POST"])
+def bank_deposit(request):
+    """DEMO: fund / top-up a demo account with a SIMPLE BALANCE INCREASE.
+
+    Deliberately NOT a scored activity: money is coming IN, so this never
+    enters run_scoring_pipeline / hybrid_scorer / any verdict logic -- no
+    Session, no Transaction, no risk score, no hold. No PIN is required
+    (not a sensitive outgoing action). The balance is increased under a row
+    lock, consistent with how bank_send_money deducts.
+
+    Body: {user_id, amount}
+    """
+    try:
+        user = BankUser.objects.get(user_id=request.data.get("user_id"))
+    except BankUser.DoesNotExist:
+        return Response({"error": "Unknown account."},
+                        status=drf_status.HTTP_404_NOT_FOUND)
+    try:
+        amount = Decimal(str(request.data.get("amount") or "0"))
+    except Exception:
+        return Response({"error": "amount must be a number."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    if amount <= 0:
+        return Response({"error": "Deposit amount must be greater than zero."},
+                        status=drf_status.HTTP_400_BAD_REQUEST)
+    if amount > DEPOSIT_MAX:
+        return Response({
+            "error": f"Deposit amount is capped at NGN {DEPOSIT_MAX:,.2f} "
+                     "for the demo.",
+        }, status=drf_status.HTTP_400_BAD_REQUEST)
+    try:
+        with transaction.atomic():
+            locked = (BankUser.objects.select_for_update().get(pk=user.pk))
+            locked.balance = (locked.balance or Decimal("0")) + amount
+            locked.save()
+            new_balance = locked.balance
+    except BankUser.DoesNotExist:
+        return Response({"error": "Unknown account."},
+                        status=drf_status.HTTP_404_NOT_FOUND)
+    ref = _new_reference()
+    _record_deposit(user, ref, amount)
+    return Response({
+        "kind": "deposit",
+        "verdict": "approve",
+        "reference": ref,
+        "amount": str(amount),
+        "balance": str(new_balance),
+        "customer_message": (
+            f"Your account has been funded with NGN {amount:,.2f}. "
+            f"New balance is NGN {new_balance:,.2f}."
+        ),
+    }, status=drf_status.HTTP_200_OK)
 
 
 # --- Nigerian name pool for realistic account-name lookup ---

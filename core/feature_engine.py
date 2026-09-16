@@ -41,7 +41,9 @@ KNOWN LIMITATION (for the write-up's honest-failure-analysis section):
   this particular signal rather than falsely flagged by it.
   keystroke_deviation_score needs >= 5 prior app sessions with keystroke
   data; live demo users type with more natural variance than synthetic
-  data, so a higher baseline prevents false positives on new users.
+  data, so a higher baseline prevents false positives on new users. The
+  deviation is also confidence-scaled by baseline size: ~50% credibility
+  at exactly 5 priors, full credibility from 20 priors onward.
 
 Usage:
     python core/feature_engine.py            # batch over whole dataset
@@ -78,10 +80,33 @@ from core.models import (  # noqa: E402
 )
 
 BATCH_SIZE = 500  # bulk_create chunk size
-VELOCITY_WINDOW = timedelta(minutes=5)
+VELOCITY_WINDOW = timedelta(minutes=2)
 MIN_USSD_BASELINE_SESSIONS = 3  # below this: not enough history to judge
 MIN_KEYSTROKE_BASELINE_SESSIONS = 5  # below this: not enough keystroke history
+# Above this many prior keystroke sessions the deviation signal contributes
+# at FULL confidence; between the min and this cap it is scaled up linearly.
+KEYSTROKE_FULL_CONFIDENCE_SESSIONS = 20
 HOUR_CAP_MINUTES = 360  # >=6h outside any window => hour_deviation 1.0
+
+# --- Keystroke artifact guard ------------------------------------------------
+# Rows whose timing is physiologically impossible for a human (a multi-second
+# key hold, a >5s inter-key gap, or sub-20-chars/min typing) are almost always
+# capture artifacts -- e.g. a key "held" while the UI re-renders between
+# screens. They must NEVER enter the baseline: a single 16s hold inflates the
+# baseline std-dev so much that every later real deviation scores ~0.0 and the
+# signal is effectively disabled for that account.
+MAX_KEYSTROKE_HOLD_MS = 2000
+MAX_KEYSTROKE_INTERVAL_MS = 5000
+MIN_KEYSTROKE_CPM = 20
+
+
+def _keystroke_is_plausible(ks):
+    """True unless the row looks like a capture artifact, not a real rhythm."""
+    return (
+        ks.avg_hold_time_ms <= MAX_KEYSTROKE_HOLD_MS
+        and ks.avg_interval_ms <= MAX_KEYSTROKE_INTERVAL_MS
+        and ks.typing_speed_cpm >= MIN_KEYSTROKE_CPM
+    )
 
 # --- Impossible travel -------------------------------------------------------
 # Generous threshold: faster than commercial air travel. A person simply
@@ -139,9 +164,11 @@ class UserHistory:
         self.geohashes.add(session.location_geohash)
         if session.channel == "ussd" and session.session_duration_seconds:
             self.ussd_durations.append(session.session_duration_seconds)
-        # Record keystroke dynamics for app sessions (if available).
+        # Record keystroke dynamics for app sessions (if available). Artifact
+        # rows (see MAX_KEYSTROKE_HOLD_MS etc.) are discarded so the baseline
+        # statistics stay representative of the user's REAL typing.
         ks = session.keystroke_dynamics.first()
-        if ks is not None:
+        if ks is not None and _keystroke_is_plausible(ks):
             self.keystroke_hold_times.append(ks.avg_hold_time_ms)
             self.keystroke_intervals.append(ks.avg_interval_ms)
             self.keystroke_cpm.append(ks.typing_speed_cpm)
@@ -234,7 +261,7 @@ def compute_features(session, history=None):
     cutoff = session.timestamp - VELOCITY_WINDOW
     while history.recent_timestamps and history.recent_timestamps[0] < cutoff:
         history.recent_timestamps.popleft()
-    velocity = len(history.recent_timestamps)  # others in (t-5m, t]
+    velocity = len(history.recent_timestamps)  # others in (t-2m, t]
 
     # --- Impossible travel --------------------------------------------------
     # Distance this session from the user's IMMEDIATELY prior session,
@@ -310,7 +337,24 @@ def compute_features(session, history=None):
             # Average absolute z-scores; within ~1 SD of normal -> 0,
             # saturating at 1.0 around +3 SD composite.
             avg_abs_z = mean(abs(z) for z in z_scores) if z_scores else 0.0
-            keystroke_score = max(0.0, min(1.0, (avg_abs_z - 1.0) / 2.0))
+            raw_score = max(0.0, min(1.0, (avg_abs_z - 1.0) / 2.0))
+            # Confidence scaling: the signal is only as trustworthy as the
+            # baseline it is measured against. A keystroke baseline of exactly
+            # MIN_KEYSTROKE_BASELINE_SESSIONS sessions is thin, so the raw
+            # deviation contributes at ~50% credibility there, ramping to full
+            # once KEYSTROKE_FULL_CONFIDENCE_SESSIONS sessions are available.
+            n = len(history.keystroke_cpm)
+            confidence = min(
+                1.0,
+                0.5
+                + (n - MIN_KEYSTROKE_BASELINE_SESSIONS)
+                * 0.5
+                / (
+                    KEYSTROKE_FULL_CONFIDENCE_SESSIONS
+                    - MIN_KEYSTROKE_BASELINE_SESSIONS
+                ),
+            )
+            keystroke_score = raw_score * confidence
         else:
             keystroke_score = None  # not enough data yet
 

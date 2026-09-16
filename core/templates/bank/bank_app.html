@@ -61,6 +61,7 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   body.light-theme .chip.approve { background: rgba(16,185,129,.12); color: #047857; }
   body.light-theme .chip.challenge { background: rgba(245,158,11,.12); color: #92400e; }
   body.light-theme .chip.block { background: rgba(239,68,68,.12); color: #b91c1c; }
+  body.light-theme .chip.deposit { background: rgba(14,165,233,.12); color: #0369a1; }
   body.light-theme footer { color: var(--muted); }
 
   .device-b {
@@ -257,6 +258,7 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   .act.border-approve { border-left-color: var(--approve); }
   .act.border-challenge { border-left-color: var(--challenge); }
   .act.border-block { border-left-color: var(--block); }
+  .act.border-deposit { border-left-color: #0ea5e9; }
   .act .who { color: var(--text); font-weight: 600; }
   .act .meta { color: var(--muted); font-size: 12px; }
   .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px;
@@ -264,6 +266,7 @@ engine via /api/bank/*. Vanilla HTML/CSS/JS, no build step.
   .chip.approve { background: rgba(16,185,129,.15); color: #34d399; }
   .chip.challenge { background: rgba(245,158,11,.15); color: #fbbf24; }
   .chip.block { background: rgba(239,68,68,.15); color: #f87171; }
+  .chip.deposit { background: rgba(14,165,233,.15); color: #38bdf8; }
 
   .honesty-note {
     font-size: 12px; color: var(--muted); text-align: center;
@@ -381,7 +384,7 @@ _</div>
         </div>
         <div class="ussd-input-row">
           <input class="field" id="ussdInput" inputmode="numeric"
-                 placeholder="type here..." autocomplete="off">
+                 placeholder="type here..." autocomplete="off" maxlength="12">
           <button class="btn" style="width:auto;padding:11px 18px;"
                   id="ussdSend">Send</button>
         </div>
@@ -691,7 +694,8 @@ _</div>
       ${error ? `<div class="banner block" style="margin-top:10px">${error}</div>` : ""}
       <div style="margin-top:12px">
         <label class="lbl">Phone number</label>
-        <input class="field" id="wlPhone" placeholder="0801 234 5678" inputmode="tel" value="${phoneVal || ""}">
+        <input class="field" id="wlPhone" placeholder="e.g. 8023456789" inputmode="numeric"
+               maxlength="10" value="${phoneVal || ""}">
         <button class="btn" id="wlCont" style="margin-top:10px">Continue</button>
       </div>
       <hr style="border-color:var(--border);width:100%;margin-top:14px">
@@ -701,6 +705,15 @@ _</div>
   }
 
   function wireWelcome() {
+    // Live-restrict the account/phone number on the welcome screen: digits
+    // only, capped at 10 (same rule as the signup and recipient fields) --
+    // Nigerian NUBAN numbers are exactly 10 digits.
+    const wlPhoneEl = document.getElementById("wlPhone");
+    if (wlPhoneEl) {
+      wlPhoneEl.addEventListener("input", () => {
+        wlPhoneEl.value = wlPhoneEl.value.replace(/\D/g, "").slice(0, 10);
+      });
+    }
     if (document.getElementById("wlCont")) {
       document.getElementById("wlCont").onclick = async () => {
         const phone = document.getElementById("wlPhone").value.trim();
@@ -939,6 +952,7 @@ const r = await api("/api/bank/login/", {phone_number: phone});
       </div>
       <div id="appAlert"></div>
       <button class="btn" id="sendBtn">Send Money</button>
+      <button class="btn" id="depBtn" style="margin-top:8px">Deposit / Top-up</button>
       <button class="btn muted" style="font-size:12px" id="swBtn">
         ${isSwitched() ? "Switch back to original device" : "Switch Device"}
       </button>
@@ -949,12 +963,13 @@ const r = await api("/api/bank/login/", {phone_number: phone});
             <div><div class="who">${a.recipient}</div>
                  <div class="meta">${a.time} &middot; ${a.channel.toUpperCase()} &middot; ${a.reference}</div></div>
             <div style="text-align:right">
-              <div>${naira(a.amount)}</div>
+              <div>${a.kind === "deposit" ? "+" : ""}${naira(a.amount)}</div>
               <span class="chip ${a.outcome}">${a.outcome}</span></div>
           </div>`).join("") ||
         `<div class="meta" style="color:var(--muted);font-size:12px">No transfers yet.</div>`
       }</div>`;
     document.getElementById("sendBtn").onclick = () => renderSendMoney();
+    document.getElementById("depBtn").onclick = () => renderDeposit();
     document.getElementById("swBtn").onclick = () => {
       if (isSwitched()) doSwitchBack();
       else doSwitchDevice();
@@ -1035,6 +1050,60 @@ const r = await api("/api/bank/login/", {phone_number: phone});
       });
     };
     document.getElementById("backBtn").onclick = () => renderDashboard();
+  }
+
+  // ---- SCREEN: Deposit / Top-up ----
+  // A simple balance increase: money is coming IN, so there is no fraud
+  // scoring, no Session/Transaction row, and no transfer-PIN authorisation.
+  function renderDeposit(error) {
+    appScreen.innerHTML = `
+      ${error ? `<div class="banner block">${error}</div>` : ""}
+      <div style="font-size:15px;font-weight:700">Deposit / Top-up</div>
+      <label class="lbl">Amount (NGN)</label>
+      <input class="field" id="depAmtIn" placeholder="e.g. 100,000" inputmode="decimal">
+      <button class="btn" id="depositBtn">Confirm Deposit</button>
+      <button class="btn muted" id="backBtn" style="font-size:12px">Back to dashboard</button>`;
+    const amtEl = document.getElementById("depAmtIn");
+    KSTrack.track(amtEl);
+    document.getElementById("depositBtn").onclick = () => {
+      const amt = amtEl.value.trim();
+      if (!amt || isNaN(Number(amt)) || Number(amt) <= 0) {
+        renderDeposit("Please enter a valid amount.");
+        return;
+      }
+      submitDeposit(amt);
+    };
+    document.getElementById("backBtn").onclick = () => renderDashboard();
+    amtEl.focus();
+  }
+
+  async function submitDeposit(amount) {
+    appScreen.innerHTML = `<div style="text-align:center;color:var(--muted);padding:40px 0">Processing...</div>`;
+    try {
+      const r = await api("/api/bank/deposit/", {user_id: USER.user_id, amount: amount});
+      if (r.error) { renderDeposit(r.error); return; }
+      renderResultDeposit(r);
+    } catch (e) {
+      renderDeposit("Something went wrong. Please try again.");
+    }
+  }
+
+  // ---- SCREEN: Deposit result ----
+  function renderResultDeposit(r) {
+    const now = new Date().toLocaleString("en-NG", {dateStyle: "medium", timeStyle: "short"});
+    const bal = Number(r.balance || 0);
+    appScreen.innerHTML = `
+      <div class="result-icon" style="color:var(--approve)">&#10003;</div>
+      <div class="banner approve">Deposit Successful</div>
+      <p class="msg" style="text-align:center">${r.customer_message}</p>
+      <div class="receipt">
+        <div class="receipt-row"><span class="receipt-label">Amount</span><span class="receipt-val">${naira(r.amount)}</span></div>
+        <div class="receipt-row"><span class="receipt-label">New balance</span><span class="receipt-val">${naira(bal)}</span></div>
+        <div class="receipt-row"><span class="receipt-label">Reference</span><span class="receipt-val">${r.reference}</span></div>
+        <div class="receipt-row"><span class="receipt-label">Date</span><span class="receipt-val">${now}</span></div>
+      </div>
+      <button class="btn" id="doneBtn">Back to dashboard</button>`;
+    document.getElementById("doneBtn").onclick = () => renderDashboard();
   }
 
   // ---- SCREEN: PIN Confirmation (before transfer) ----
@@ -1160,6 +1229,16 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   let uState = "idle";
   let uCtx = {};
 
+  function ussdGoto(s) {
+    uState = s;
+    ussdInput.maxLength = 12;
+    if (s === "idle") ussdInput.maxLength = 5;
+    else if (s === "menu" || s === "sm_confirm") ussdInput.maxLength = 1;
+    else if (s === "sm_recipient") ussdInput.maxLength = 10;
+    else if (s === "sm_pin") ussdInput.maxLength = 4;
+    else if (s === "otp") ussdInput.maxLength = 6;
+  }
+
   function term(text) { ussdScreen.textContent = text; }
 
   function menuText() {
@@ -1185,7 +1264,7 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     if (uState === "idle") {
       if (v.replace(/\s/g, "") === "*737#") {
         ensureDevices();
-        uState = "menu"; uCtx = {};
+        ussdGoto("menu"); uCtx = {};
         term(menuText());
       } else if (USER) {
         term(`Invalid code. Dial *737# to begin.\n\n(You are logged in as ${USER.first_name} on the app; your SIM identity is shared.)`);
@@ -1198,7 +1277,7 @@ const r = await api("/api/bank/login/", {phone_number: phone});
 
     switch (uState) {
       case "menu":
-        if (v === "1") { uState = "sm_amount"; term(`Send Money\nEnter amount:`); }
+        if (v === "1") { ussdGoto("sm_amount"); term(`Send Money\nEnter amount:`); }
         else if (v === "2") await ussdBalance();
         else if (v === "0") ussdExit();
         else term(`Invalid option.\n\n` + menuText());
@@ -1207,21 +1286,21 @@ const r = await api("/api/bank/login/", {phone_number: phone});
         const amt = Number(v);
         if (!amt || amt <= 0) { term(`Amount must be a positive number.\n\nEnter amount:`); break; }
         uCtx.amount = v;
-        uState = "sm_recipient";
+        ussdGoto("sm_recipient");
         term(`Send Money\nEnter recipient account number:`);
         break;
       }
       case "sm_recipient": {
-        if (!/^\d{3,12}$/.test(v)) { term(`Recipient must be 3-12 digits (an account number), not free text.\n\nEnter recipient account number:`); break; }
+        if (!/^\d{10}$/.test(v)) { term(`Recipient must be exactly 10 digits (Nigerian NUBAN account number).\n\nEnter recipient account number:`); break; }
         uCtx.recipient = "BNF-" + v;
-        uState = "sm_pin";
+        ussdGoto("sm_pin");
         term(`Send Money NGN ${Number(uCtx.amount).toLocaleString()}\nto ${uCtx.recipient}\n\nEnter your 4-digit PIN:`);
         break;
       }
       case "sm_pin": {
         if (!/^\d{4}$/.test(v)) { term(`PIN must be exactly 4 digits.\n\nEnter your 4-digit PIN:`); break; }
         uCtx.pin = v;
-        uState = "sm_confirm";
+        ussdGoto("sm_confirm");
         term(`Confirm transfer:\nNGN ${Number(uCtx.amount).toLocaleString()} to ${uCtx.recipient}\n\n1. Confirm\n2. Cancel`);
         break;
       }
@@ -1235,12 +1314,12 @@ const r = await api("/api/bank/login/", {phone_number: phone});
         uCtx.releasing = true;
         const r = await api("/api/bank/send-money/", ussdPayload({challenge_reference: uCtx.ref}));
         showUssdVerdict(r);
-        uState = r.verdict === "approve" ? "done" : "otp";
+        ussdGoto(r.verdict === "approve" ? "done" : "otp");
         break;
       }
       case "done":
       default:
-        uState = "menu"; uCtx = {};
+        ussdGoto("menu"); uCtx = {};
         term(menuText());
     }
   }
@@ -1264,12 +1343,12 @@ const r = await api("/api/bank/login/", {phone_number: phone});
     }));
     if (r.verdict === "challenge" && r.hold) {
       uCtx.ref = r.reference;
-      uState = "otp";
+      ussdGoto("otp");
       term(`${r.customer_message}\n\nEnter code sent to your phone:`);
       return;
     }
     showUssdVerdict(r);
-    uState = r.verdict === "approve" ? "done" : "menu";
+    ussdGoto(r.verdict === "approve" ? "done" : "menu");
   }
 
   function showUssdVerdict(r) {
@@ -1293,7 +1372,7 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   }
 
   function ussdExit() {
-    uState = "idle"; uCtx = {};
+    ussdGoto("idle"); uCtx = {};
     term(`Thank you for banking with SessionGuard.\n\nDial *737# to begin again.`);
   }
 

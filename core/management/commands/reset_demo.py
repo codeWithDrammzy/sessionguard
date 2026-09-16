@@ -11,9 +11,9 @@ What it removes (each documented in core/):
   The 250 seeded customers all have empty phone/first_name; only a visitor
   who actually signed up through the live app carries a phone number. Deleting
   the user cascades to their sessions, transactions, features and keystrokes.
-* Demo Control-Room debris -- sessions stamped DEMO_TOWER, plus any same-day
-  unlabelled session (the same defence as demo_scenarios / smoke_test_api).
-* Smoke-test debris -- sessions stamped SMOKE_TOWER.
+* Demo Control-Room debris -- sessions stamped with a reserved debris marker
+  (DEMO_TOWER / SMOKE_TOWER / OFFLINE_TOWER, shared with demo_scenarios).
+* Smoke-test debris -- sessions stamped SMOKE_TOWER (same whitelist).
 * offline_queue.jsonl -- stale resync entries from an offline demo run, so a
   judge never sees phantom queued traffic.
 
@@ -25,7 +25,6 @@ import os
 import sys
 
 from django.core.management.base import BaseCommand
-from django.utils import timezone
 
 PROJECT_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -46,11 +45,8 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         check = options["check"]
 
-        from core.models import BankUser, Session, FraudLabel, BehavioralFeatures
-
-        start_of_today = timezone.now().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        from core.demo_scenarios import DEBRIS_TOWERS
+        from core.models import BankUser, Session, BehavioralFeatures
 
         # --- 1. Browser-created test accounts ---------------------------------
         test_users = list(
@@ -63,20 +59,19 @@ class Command(BaseCommand):
         )
         orphan_sessions = Session.objects.filter(user__isnull=True)
 
-        # --- 2. Demo + smoke debris (same-day unlabelled / marker rows) -------
-        marked = Session.objects.filter(
-            ip_or_cell_tower_id__in=["TWR-DEMO-CONTROL", "TWR-SMOKE-TEST"]
-        )
-        orphans = Session.objects.filter(
-            timestamp__gte=start_of_today
-        ).exclude(fraud_label__isnull=False)
+        # --- 2. Demo + smoke debris (marker whitelist only) -------------------
+        # Exactly the same rule as core.demo_scenarios._purge_previous_demo_traffic:
+        # a session is debris if and only if its tower ID is a reserved marker.
+        # There is NO same-day-unlabelled heuristic: the seeded baseline
+        # legitimately has sessions dated "today", and the old sweep deleted
+        # those real rows (measured at 84 on one Control Room load).
+        marked = Session.objects.filter(ip_or_cell_tower_id__in=DEBRIS_TOWERS)
 
         counts = {
             "test_accounts": len(test_users),
             "orphan_feature_rows": orphan_features.count(),
             "orphan_session_rows": orphan_sessions.count(),
             "demo_marker_sessions": marked.count(),
-            "same_day_orphan_sessions": orphans.count(),
             "offline_queue_entries": (
                 sum(1 for _ in open(QUEUE_PATH, "r", encoding="utf-8"))
                 if os.path.exists(QUEUE_PATH)
@@ -97,7 +92,6 @@ class Command(BaseCommand):
         orphan_sessions.delete()
         orphan_features.delete()
         marked.delete()
-        orphans.delete()
 
         # --- 3. Clear the offline resync queue --------------------------------
         if os.path.exists(QUEUE_PATH):

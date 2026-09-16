@@ -7,8 +7,7 @@ The single decision function the future API endpoint calls. Combines:
   * ``rules_engine.score_session``   -- transparent weighted signals
   * ``ml_model.predict_risk``        -- learned P(fraud) over the same features
 
-...then applies ONE principled correction for the failure mode observed
-when the two were evaluated separately:
+...then applies two documented, independent corrections:
 
 WHY THE OVERRIDE EXISTS
 -----------------------
@@ -30,6 +29,20 @@ hour are unremarkable, cap severity at CHALLENGE (step-up verification).
 Patient attacks still get caught -- with friction instead of a hard block;
 a wrongly-suspected genuine customer faces an OTP prompt, not a frozen
 account. Only "block" is softened, only by one level, never the reverse.
+
+WHY THE KEYSTROKE OVERRIDE EXISTS
+---------------------------------
+Typing rhythm is a biometric, but a naturally variable one: sorted by
+device, mood, walking pace, even seating. The rules engine therefore
+rewards keystroke deviation up to 40 points -- enough to reach CHALLENGE
+on its own but never, alone, to hit the block floor. Machine learning has
+no such ceiling, so a score combining max(rules, ML) could still block a
+session whose ONLY anomaly is typing. That block depends on the one signal
+whose interpretation is least settled, so -- exactly like the hardware
+case -- it is softened one level: when removing the keystroke contribution
+from the rules score AND leaving the ML model out of it would no longer
+reach block, the verdict drops to CHALLENGE. Keystroke plus other abnormal
+signals (amount, hour, travel, model risk) blocks just as before.
 
 WHY MAX() COMBINES THE TWO SIGNALS
 ----------------------------------
@@ -126,10 +139,11 @@ def is_context_normal(features):
 
 @dataclass
 class HybridDecision(RiskDecision):
-    """RiskDecision plus the two fields needed for audit/explanation."""
+    """RiskDecision plus the three fields needed for audit/explanation."""
 
     ml_probability: float = 0.0
     context_override_applied: bool = False
+    keystroke_override_applied: bool = False
 
 
 def _band(score):
@@ -146,7 +160,8 @@ def score_session_hybrid(features):
     Final production decision for one session.
 
     Steps: rules score -> ML probability -> combined = max(...) -> band ->
-    context-normalcy override (block->challenge ONLY) -> merged reasons.
+    hardware/context override (block->challenge ONLY) -> keystroke override
+    (block->challenge ONLY) -> merged reasons.
     """
     rules_decision = score_session(features)
     ml_prob = predict_risk(features)
@@ -166,6 +181,27 @@ def score_session_hybrid(features):
         verdict = "challenge"
         context_override_applied = True
 
+    # THE KEYSTROKE OVERRIDE: keystroke rhythm is naturally variable across
+    # a user's devices, sessions and moods, so a block whose ONLY reason
+    # (after accounting for both engines) is typing deviation -- i.e. where
+    # removing keystroke's rules contribution drops the combined score below
+    # the block floor and the ML model alone would NOT block either -- is
+    # softened to challenge. Keystroke + other signals (abnormal amount,
+    # hour, travel, ML) still block. Separate from, never stacked with, the
+    # hardware/context override above.
+    keystroke_override_applied = False
+    kc_reasons = [
+        r for r in rules_decision.triggered_reasons
+        if r["code"] == "keystroke_deviation"
+    ]
+    if verdict == "block" and kc_reasons:
+        rules_wo_keystroke = (
+            rules_decision.score - kc_reasons[0]["weight"]
+        )
+        if max(rules_wo_keystroke, ml_points) <= CHALLENGE_MAX:
+            verdict = "challenge"
+            keystroke_override_applied = True
+
     triggered_reasons = list(rules_decision.triggered_reasons)
     if ml_points >= rules_decision.score:
         # ML was the binding constraint (or tied): record its contribution.
@@ -176,6 +212,10 @@ def score_session_hybrid(features):
         triggered_reasons.append(
             {"code": "context_normal_override", "weight": 0}
         )
+    if keystroke_override_applied:
+        triggered_reasons.append(
+            {"code": "keystroke_override", "weight": 0}
+        )
 
     return HybridDecision(
         session_id=str(features.session_id),
@@ -184,6 +224,7 @@ def score_session_hybrid(features):
         triggered_reasons=triggered_reasons,
         ml_probability=ml_prob,
         context_override_applied=context_override_applied,
+        keystroke_override_applied=keystroke_override_applied,
     )
 
 
@@ -284,8 +325,10 @@ def score_all_sessions_hybrid():
         c = sum(1 for d in ds if d.verdict == "challenge")
         a = sum(1 for d in ds if d.verdict == "approve")
         ov = sum(1 for d in ds if d.context_override_applied)
+        kvc = sum(1 for d in ds if d.keystroke_override_applied)
         print(f"  {kind:<28} n={n:>2}  block={b:>2} ({_pct(b, n)})  "
-              f"challenge={c:>2}  approve={a:>2}  overrides={ov}")
+              f"challenge={c:>2}  approve={a:>2}  overrides={ov}  "
+              f"keystroke-overrides={kvc}")
 
     print()
     print("Legitimate anomalies (hybrid):")

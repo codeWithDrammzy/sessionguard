@@ -24,7 +24,7 @@ DESIGN NOTES
 * ``new_recipient_alone`` is worth a deliberately tiny +3: the brief warns
   that paying someone new is normal life; alone it must never move a
   verdict, it only adds weight in combination.
-* Velocity scores sessions BEYOND the first in the 5-minute window
+* Velocity scores sessions BEYOND the first in the 2-minute window
   (max(0, count - 1) * 8): 0 or 1 transactions is normal, so the literal
   ``count * 8`` reading would punish ordinary single transfers.
 * Scaled rules (hour/amount/menu-timing) contribute round(score * max).
@@ -73,8 +73,8 @@ WEIGHTS = {
     "hour_deviation_max": 15,
     "amount_deviation_max": 20,
     "menu_timing_deviation_max": 15,
-    "keystroke_deviation_max": 12,
-    # Per EXTRA transaction beyond the first inside the 5-minute window.
+    "keystroke_deviation_max": 40,
+    # Per EXTRA transaction beyond the first inside the 2-minute window.
     "velocity_per_extra_session": 8,
     # Deliberately tiny: new recipient alone is normal life (brief warning).
     "new_recipient_alone": 3,

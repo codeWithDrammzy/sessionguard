@@ -83,7 +83,7 @@ Spoken point (the override, the standout mechanism):
 Click **"Family shared phone"** (family_sharing).
 
 Expected:
-- Verdict **approve**, score **22**, ML **0.03**.
+- Verdict **approve**, score **18**, ML **0.03**.
 
 Spoken point:
 - "Mum sending money via her daughter's phone. Same SIM, same location, small
@@ -96,11 +96,11 @@ Spoken point:
 Click **"Normal login"** (normal_login).
 
 Expected:
-- Verdict **approve**, score **2**, ML **0.01**.
+- Verdict **approve**, score **1**, ML **0.01**.
 
 Spoken point:
 - "And the great majority of traffic — an ordinary login, ordinary transfer —
-  sails through with a score of 2. The system is strict where it must be,
+  sails through with a score of 1. The system is strict where it must be,
   invisible where it should be."
 
 ---

@@ -18,8 +18,8 @@ from django.contrib import admin
 from django.urls import path
 
 from core.bank_views import (
-    BankAppView, bank_login, bank_lookup_account, bank_send_money,
-    bank_set_pin, bank_signup, bank_state, bank_verify_pin,
+    BankAppView, bank_deposit, bank_login, bank_lookup_account,
+    bank_send_money, bank_set_pin, bank_signup, bank_state, bank_verify_pin,
 )
 from core.demo_views import (
     ControlRoomView, confirm_outcome, demo_scenarios, toggle_offline,
@@ -48,5 +48,6 @@ urlpatterns = [
     path('api/bank/verify-pin/', bank_verify_pin, name='bank-verify-pin'),
     path('api/bank/state/<uuid:user_id>/', bank_state, name='bank-state'),
     path('api/bank/send-money/', bank_send_money, name='bank-send-money'),
+    path('api/bank/deposit/', bank_deposit, name='bank-deposit'),
     path('api/bank/lookup-account/', bank_lookup_account, name='bank-lookup-account'),
 ]

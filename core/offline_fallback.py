@@ -391,9 +391,18 @@ DEMO_TOWER = "TWR-SMOKE-OFFLINE"
 
 def _pick_user(prefer_channel, hour):
     for u in BankUser.objects.filter(channel_preference=prefer_channel):
+        if not (u.typical_recipients and u.typical_transfer_min
+                and u.typical_transfer_max):
+            continue  # cannot build a demo payload (no known recipient)
         if any(s <= hour < e for s, e in u.typical_login_hours):
             return u
-    return BankUser.objects.filter(channel_preference=prefer_channel).first()
+    return next(
+        (u for u in BankUser.objects.filter(
+            channel_preference=prefer_channel)
+         if u.typical_recipients and u.typical_transfer_min
+         and u.typical_transfer_max),
+        None,
+    )
 
 
 def _baseline_anchor(user):
