@@ -98,6 +98,13 @@ HOUR_CAP_MINUTES = 360  # >=6h outside any window => hour_deviation 1.0
 MAX_KEYSTROKE_HOLD_MS = 2000
 MAX_KEYSTROKE_INTERVAL_MS = 5000
 MIN_KEYSTROKE_CPM = 20
+# A session whose keystroke deviation was scored AT OR ABOVE this level was
+# judged a probable different typist (rules contribution rounds high). Such a
+# session must NEVER be absorbed into the typing baseline: otherwise one
+# caught attacker silently becomes "the user's normal rhythm" and the very
+# next identical attack scores ~0. Excludes only the keystroke contribution
+# to history; device/SIM/location context is still recorded unconditionally.
+KEYSTROKE_BASELINE_ABSORB_THRESHOLD = 0.5
 
 
 def _keystroke_is_plausible(ks):
@@ -107,6 +114,18 @@ def _keystroke_is_plausible(ks):
         and ks.avg_interval_ms <= MAX_KEYSTROKE_INTERVAL_MS
         and ks.typing_speed_cpm >= MIN_KEYSTROKE_CPM
     )
+
+
+def _keystroke_absorb_ok(prev_score):
+    """True iff a prior session's keystroke data may teach the baseline.
+
+    ``prev_score`` is the keystroke_deviation_score that session itself
+    received when it was scored. None (no score, e.g. old rows or inadequate
+    history at the time) is treated as teachable; a score at or above
+    KEYSTROKE_BASELINE_ABSORB_THRESHOLD means the system already suspected a
+    different typist, so that session is kept OUT of the learned rhythm.
+    """
+    return prev_score is None or prev_score < KEYSTROKE_BASELINE_ABSORB_THRESHOLD
 
 # --- Impossible travel -------------------------------------------------------
 # Generous threshold: faster than commercial air travel. A person simply
@@ -138,6 +157,13 @@ class UserHistory:
         self.keystroke_hold_times = []
         self.keystroke_intervals = []
         self.keystroke_cpm = []
+        # Richer rhythm features (optional per-row; kept separate so rows
+        # captured before they existed, or with too few samples to estimate
+        # them, simply contribute fewer dimensions to the composite z).
+        self.keystroke_hold_stds = []
+        self.keystroke_interval_stds = []
+        self.keystroke_longest_pauses = []
+        self.keystroke_backspaces = []
         # Timestamps kept for velocity; pruned from the left as time moves.
         self.recent_timestamps = deque()
         # The immediately-prior session (any channel) -- the anchor point for
@@ -156,8 +182,16 @@ class UserHistory:
         """Most common SIM seen so far (None if no history)."""
         return self.sim_counts.most_common(1)[0][0] if self.sim_counts else None
 
-    def observe(self, session):
-        """Fold a session INTO history. Call only AFTER scoring it."""
+    def observe(self, session, keystroke_deviation=None):
+        """Fold a session INTO history. Call only AFTER scoring it.
+
+        ``keystroke_deviation`` is the keystroke deviation score that THIS
+        session received when scored (optional). If it is >= the absorb
+        threshold the keystroke component of the session is excluded from the
+        baseline: a session the system itself flagged as a probable different
+        typist must not be learned as "the user's normal rhythm". Everything
+        else (device/SIM/location/velocity context) is still recorded.
+        """
         if session.device_fingerprint:
             self.device_counts[session.device_fingerprint] += 1
         self.sim_counts[session.sim_id] += 1
@@ -166,12 +200,23 @@ class UserHistory:
             self.ussd_durations.append(session.session_duration_seconds)
         # Record keystroke dynamics for app sessions (if available). Artifact
         # rows (see MAX_KEYSTROKE_HOLD_MS etc.) are discarded so the baseline
-        # statistics stay representative of the user's REAL typing.
+        # statistics stay representative of the user's REAL typing. A session
+        # that itself scored as a keystroke anomaly is likewise kept out.
         ks = session.keystroke_dynamics.first()
-        if ks is not None and _keystroke_is_plausible(ks):
+        if ks is not None and _keystroke_is_plausible(ks) and _keystroke_absorb_ok(
+            keystroke_deviation
+        ):
             self.keystroke_hold_times.append(ks.avg_hold_time_ms)
             self.keystroke_intervals.append(ks.avg_interval_ms)
             self.keystroke_cpm.append(ks.typing_speed_cpm)
+            if ks.hold_time_std_ms is not None:
+                self.keystroke_hold_stds.append(ks.hold_time_std_ms)
+            if ks.interval_std_ms is not None:
+                self.keystroke_interval_stds.append(ks.interval_std_ms)
+            if ks.longest_pause_ms is not None:
+                self.keystroke_longest_pauses.append(ks.longest_pause_ms)
+            if ks.backspace_count is not None:
+                self.keystroke_backspaces.append(ks.backspace_count)
         self.recent_timestamps.append(session.timestamp)
         self.last_session = session
 
@@ -318,26 +363,58 @@ def compute_features(session, history=None):
         # Look for this session's keystroke data.
         ks = session.keystroke_dynamics.first()
         if ks is not None and len(history.keystroke_cpm) >= MIN_KEYSTROKE_BASELINE_SESSIONS:
-            # Composite z-score across three keystroke dimensions, averaged
-            # into a single 0.0-1.0 deviation signal.
-            z_scores = []
-            for current, history_vals in [
+            # Dimension list: the three legacy aggregate means PLUS any richer
+            # rhythm feature the row captured. Each dimension is z-scored
+            # against that user's OWN historical baseline for the same metric.
+            dimensions = [
                 (ks.avg_hold_time_ms, history.keystroke_hold_times),
                 (ks.avg_interval_ms, history.keystroke_intervals),
                 (ks.typing_speed_cpm, history.keystroke_cpm),
-            ]:
+                (ks.hold_time_std_ms, history.keystroke_hold_stds),
+                (ks.interval_std_ms, history.keystroke_interval_stds),
+                (ks.longest_pause_ms, history.keystroke_longest_pauses),
+                (ks.backspace_count, history.keystroke_backspaces),
+            ]
+            z_scores = []
+            for current, history_vals in dimensions:
+                if current is None or not history_vals:
+                    continue
                 mu = mean(history_vals)
                 sigma = pstdev(history_vals)
                 if sigma > 0:
                     z_scores.append((current - mu) / sigma)
                 elif current != mu:
-                    z_scores.append(1.0)
+                    # Zero-variance history: the user's habit is a constant.
+                    # ANY deviation is then maximally out of family (the
+                    # exact magnitude is unknowable, so treat it as far out
+                    # rather than a mild 1 SD -- a >2 SD class difference).
+                    z_scores.append(3.0)
                 else:
                     z_scores.append(0.0)
-            # Average absolute z-scores; within ~1 SD of normal -> 0,
-            # saturating at 1.0 around +3 SD composite.
-            avg_abs_z = mean(abs(z) for z in z_scores) if z_scores else 0.0
-            raw_score = max(0.0, min(1.0, (avg_abs_z - 1.0) / 2.0))
+            abs_z = [abs(z) for z in z_scores]
+            if abs_z:
+                # A plain mean of |z| lets ONE out-of-family reading hide
+                # inside the rest (a fast stranger's triple cpm is diluted
+                # by two near-normal means). Blend the strongest single
+                # dimension with the overall distance so a genuinely
+                # different typist cannot get averaged back into "normal".
+                max_abs_z = max(abs_z)
+                avg_abs_z = mean(abs_z)
+                composite = 0.6 * max_abs_z + 0.4 * avg_abs_z
+                # Within ~1 SD of normal on every axis -> 0; the blend
+                # saturates at 1.0 once the composite reaches ~3 SD (one
+                # dimension alone near 4-5 SD, or two near 3 SD).
+                raw_score = max(0.0, min(1.0, (composite - 1.0) / 2.0))
+            else:
+                raw_score = 0.0
+            # login_pin_failures: wrong-PIN attempts at login are a strong
+            # "this is not the routine user" signal in their own right --
+            # the rightful owner knows the PIN. Fold them in as a hard floor:
+            # 1 flub is ordinary user error, 2+ escalates quickly.
+            failures = ks.login_pin_failures or 0
+            if failures >= 2:
+                failure_signal = min(1.0, (failures - 1) / 3.0)
+                raw_score = max(raw_score, failure_signal)
             # Confidence scaling: the signal is only as trustworthy as the
             # baseline it is measured against. A keystroke baseline of exactly
             # MIN_KEYSTROKE_BASELINE_SESSIONS sessions is thin, so the raw
@@ -390,9 +467,15 @@ def load_user_history(user_id, before):
     history = UserHistory()
     priors = Session.objects.filter(
         user_id=user_id, timestamp__lt=before
-    ).prefetch_related("keystroke_dynamics").order_by("timestamp")
+    ).prefetch_related(
+        "keystroke_dynamics", "features"
+    ).order_by("timestamp")
     for s in priors:
-        history.observe(s)
+        try:
+            score = s.features.keystroke_deviation_score
+        except BehavioralFeatures.DoesNotExist:
+            score = None
+        history.observe(s, keystroke_deviation=score)
     return history
 
 
@@ -451,7 +534,11 @@ def compute_features_for_all_sessions(batch_size=BATCH_SIZE):
 
     for session in sessions.iterator(chunk_size=batch_size):
         features = compute_features(session, history=histories[session.user_id])
-        histories[session.user_id].observe(session)  # AFTER scoring: causality
+        # AFTER scoring: causality. Pass this session's own keystroke score so
+        # a session flagged as a typing anomaly does not teach the baseline.
+        histories[session.user_id].observe(
+            session, keystroke_deviation=features.keystroke_deviation_score
+        )
         pending.append(features)
         processed += 1
 

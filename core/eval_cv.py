@@ -170,13 +170,17 @@ def evaluate_fold(sessions, labels, kinds, y, train_idx, test_idx):
 
     # --- Train features (causal within the train fold only) ------------------
     hist = {}
+    train_ks_score = {}  # session_id -> its own scored keystroke deviation
     X_train, y_train = [], []
     for s in train_sessions:
         h = hist.setdefault(s.user_id, UserHistory())
         ft = compute_features(s, history=h)
+        train_ks_score[s.session_id] = ft.keystroke_deviation_score
         X_train.append(_vectorize(ft, FEATURE_COLUMNS))
         y_train.append(1 if _is_attack(s, labels) else 0)
-        h.observe(s)  # after scoring -> causality
+        # after scoring -> causality. Same absorb rule as live: a session
+        # flagged as a typing anomaly must not teach the baseline.
+        h.observe(s, keystroke_deviation=ft.keystroke_deviation_score)
     X_train, y_train = np.array(X_train), np.array(y_train)
 
     model = LogisticRegression(class_weight="balanced", max_iter=1000, random_state=0)
@@ -192,11 +196,13 @@ def evaluate_fold(sessions, labels, kinds, y, train_idx, test_idx):
     def train_history_for(user_id, ts):
         """Strictly-causal train-only history for one test session: replay
         ONLY that user's train-fold sessions with timestamp < ts. This is
-        the fold-aware equivalent of load_user_history()."""
+        the fold-aware equivalent of load_user_history(). Applies the same
+        keystroke-absorb guard (anomalous train sessions never teach)."""
         h = UserHistory()
         for s in per_user_train.get(user_id, ()):  # already ts-ascending
             if s.timestamp < ts:
-                h.observe(s)
+                h.observe(s, keystroke_deviation=train_ks_score.get(
+                    s.session_id))
             else:
                 break
         return h

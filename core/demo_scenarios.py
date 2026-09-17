@@ -200,6 +200,7 @@ def _keystroke_profile(user):
         hour=0, minute=0, second=0, microsecond=0
     )
     holds, intervals, cpm = [], [], []
+    hold_stds, interval_stds, pauses, backspaces = [], [], [], []
     priors = (
         Session.objects.filter(
             user=user,
@@ -217,12 +218,28 @@ def _keystroke_profile(user):
         holds.append(ks.avg_hold_time_ms)
         intervals.append(ks.avg_interval_ms)
         cpm.append(ks.typing_speed_cpm)
+        if ks.hold_time_std_ms is not None:
+            hold_stds.append(ks.hold_time_std_ms)
+        if ks.interval_std_ms is not None:
+            interval_stds.append(ks.interval_std_ms)
+        if ks.longest_pause_ms is not None:
+            pauses.append(ks.longest_pause_ms)
+        if ks.backspace_count is not None:
+            backspaces.append(ks.backspace_count)
     if not holds:
         return None
     return {
         "avg_hold_time_ms": sum(holds) / len(holds),
         "avg_interval_ms": sum(intervals) / len(intervals),
         "typing_speed_cpm": sum(cpm) / len(cpm),
+        "hold_time_std_ms":
+            sum(hold_stds) / len(hold_stds) if hold_stds else None,
+        "interval_std_ms":
+            sum(interval_stds) / len(interval_stds) if interval_stds else None,
+        "longest_pause_ms":
+            sum(pauses) / len(pauses) if pauses else None,
+        "backspace_count":
+            round(sum(backspaces) / len(backspaces)) if backspaces else None,
     }
 
 
@@ -421,13 +438,26 @@ def get_preset_scenarios() -> dict:
         # Attacker's rhythm: the takeover runs a scripted/bot keystroke
         # pattern ~50% off this customer's real baseline in every
         # dimension, so keystroke_deviation saturates for the demo.
+        _p = patient_ks
         scenarios["patient_attack"]["payload"]["keystroke"] = {
             "avg_hold_time_ms":
-                round(max(20.0, patient_ks["avg_hold_time_ms"] * 0.5), 2),
+                round(max(20.0, _p["avg_hold_time_ms"] * 0.5), 2),
+            "hold_time_std_ms":
+                round(max(5.0, _p["hold_time_std_ms"] * 0.5), 2)
+                if _p["hold_time_std_ms"] is not None else None,
             "avg_interval_ms":
-                round(max(30.0, patient_ks["avg_interval_ms"] * 0.5), 2),
+                round(max(30.0, _p["avg_interval_ms"] * 0.5), 2),
+            "interval_std_ms":
+                round(max(10.0, _p["interval_std_ms"] * 0.5), 2)
+                if _p["interval_std_ms"] is not None else None,
+            "longest_pause_ms":
+                round(max(30.0, _p["longest_pause_ms"] * 0.3), 2)
+                if _p["longest_pause_ms"] is not None else None,
+            "backspace_count":
+                max(1, int(_p["backspace_count"] * 1.5))
+                if _p["backspace_count"] is not None else None,
             "typing_speed_cpm":
-                round(patient_ks["typing_speed_cpm"] * 2.5, 2),
+                round(_p["typing_speed_cpm"] * 2.5, 2),
         }
 
     # ------------------------------------------------------------------

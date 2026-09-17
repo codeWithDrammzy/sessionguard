@@ -51,10 +51,34 @@ class KeystrokeEventSerializer(serializers.Serializer):
         min_value=0,
         help_text="Mean key hold duration in milliseconds.",
     )
+    hold_time_std_ms = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        help_text="Std-dev of key hold durations (rhythm stability).",
+    )
     avg_interval_ms = serializers.FloatField(
         required=False,
         min_value=0,
         help_text="Mean inter-key interval in milliseconds.",
+    )
+    interval_std_ms = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        help_text="Std-dev of inter-key intervals (burstiness).",
+    )
+    longest_pause_ms = serializers.FloatField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        help_text="Longest gap between consecutive keystrokes.",
+    )
+    backspace_count = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        help_text="Corrections (Backspace/Delete) during the captured typing.",
     )
     typing_speed_cpm = serializers.FloatField(
         required=False,

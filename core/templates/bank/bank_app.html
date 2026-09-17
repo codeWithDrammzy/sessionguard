@@ -484,12 +484,14 @@ _</div>
     _events: [],        // [{t, type:"down"|"up", field}] chronologically ordered
     _lastKeyTime: null,  // timestamp of last keydown (for interval calc)
     _lastField: null,    // which field we're currently tracking
+    _backspaces: 0,      // correction count (unfamiliarity signal)
 
     track(el) {
       if (el._ksTracked) return;
       el._ksTracked = true;
       el.addEventListener("keydown", e => {
         if (e.key.length > 1 && e.key !== "Backspace" && e.key !== "Delete") return;
+        if (e.key === "Backspace" || e.key === "Delete") this._backspaces += 1;
         this._events.push({t: performance.now(), type: "down", field: el.id || "?"});
       });
       el.addEventListener("keyup", e => {
@@ -513,21 +515,6 @@ _</div>
 
     aggregate() {
       if (this._events.length < 2) return null;
-      const holds = [];
-      const intervals = [];
-      let lastUp = null;
-      for (const ev of this._events) {
-        if (ev.type === "up") {
-          const downEv = this._events.find(
-            (e, i) => e.type === "down" && e.field === ev.field
-                     && !this._events.slice(0, i).some(
-                       u => u.type === "up" && u.field === e.field
-                     )
-          );
-          // Simpler approach: pair consecutive down/up
-        }
-      }
-      // Rebuild with proper pairing
       const stack = [];
       const pairedHolds = [];
       for (const ev of this._events) {
@@ -539,6 +526,7 @@ _</div>
       }
       // Intervals: time between successive keydowns
       const downs = this._events.filter(e => e.type === "down");
+      const intervals = [];
       for (let i = 1; i < downs.length; i++) {
         intervals.push(downs[i].t - downs[i-1].t);
       }
@@ -551,14 +539,29 @@ _</div>
       const cpm = totalMs > 0
         ? (pairedHolds.length / totalMs) * 60000
         : 200;
+      // Rhythm stability: population std-dev of holds and of inter-key
+      // intervals, plus the single longest gap. A different typist on the
+      // SAME device shows up here even when the means roughly match.
+      const pstdev = vals => {
+        if (vals.length < 2) return null;
+        const m = vals.reduce((a,b) => a+b, 0) / vals.length;
+        return Math.sqrt(vals.reduce((a,b) => a + (b - m) * (b - m), 0) / vals.length);
+      };
+      const holdStd = pstdev(pairedHolds);
+      const intStd = pstdev(intervals);
+      const longestPause = intervals.length ? Math.max(...intervals) : null;
       return {
         avg_hold_time_ms: Math.round(avgHold * 10) / 10,
+        hold_time_std_ms: holdStd === null ? null : Math.round(holdStd * 10) / 10,
         avg_interval_ms: Math.round(avgInterval * 10) / 10,
+        interval_std_ms: intStd === null ? null : Math.round(intStd * 10) / 10,
+        longest_pause_ms: longestPause === null ? null : Math.round(longestPause * 10) / 10,
+        backspace_count: this._backspaces,
         typing_speed_cpm: Math.round(cpm),
       };
     },
 
-    reset() { this._events = []; this._lastKeyTime = null; },
+    reset() { this._events = []; this._lastKeyTime = null; this._backspaces = 0; },
   };
 
   // ==================== SWITCHED DEVICE MODE ====================

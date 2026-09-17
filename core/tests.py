@@ -72,11 +72,16 @@ def make_session(user, ts, *, device="dev-A", sim="sim-1", geo="s1tstzz",
 
 
 def make_keystroke(session, hold=150.0, interval=1000.0, cpm=55.0,
-                   failures=None):
+                   failures=None, hold_std=None, interval_std=None,
+                   longest_pause=None, backspaces=None):
     return KeystrokeDynamics.objects.create(
         session=session,
         avg_hold_time_ms=hold,
+        hold_time_std_ms=hold_std,
         avg_interval_ms=interval,
+        interval_std_ms=interval_std,
+        longest_pause_ms=longest_pause,
+        backspace_count=backspaces,
         typing_speed_cpm=cpm,
         login_pin_failures=failures,
     )
@@ -274,6 +279,173 @@ class KeystrokeArtifactGuardTests(TestCase):
         make_keystroke(target, hold=206.4, interval=2574.4, cpm=24.0)
         f = compute_features(target)
         self.assertGreater(f.keystroke_deviation_score, 0.5)
+
+
+class KeystrokeSensitivityTests(TestCase):
+    """Richer-feature composite: strong single-dimension and rhythm-shape
+    deviations must fully surface instead of being diluted by a plain mean."""
+
+    def _baseline_and_target(self, priors, target_ks):
+        user = make_user()
+        now = timezone.now()
+        for i, ks in enumerate(priors):
+            ps = make_session(user, now - timedelta(minutes=600 - i * 30),
+                              device="dev-A")
+            make_keystroke(ps, **ks)
+        t = make_session(user, now, device="dev-A")
+        make_keystroke(t, **target_ks)
+        return compute_features(t).keystroke_deviation_score
+
+    def test_fast_typist_no_longer_diluted_to_zero(self):
+        # Live regression: cpm=114 vs owner baseline ~70 (z=+1.56) with
+        # hold/int near-normal scored 0.0127 under the old mean-of-|z|.
+        # The max-blend composite must keep a single strong dimension loud.
+        avg = [dict(hold=137.0, interval=1054.0, cpm=70.0)
+               for _ in range(20)]
+        score = self._baseline_and_target(
+            avg, dict(hold=126.8, interval=542.8, cpm=114.0))
+        self.assertGreater(score, 0.1)
+        self.assertLessEqual(score, 1.0)
+
+    def test_rhythm_shape_dimensions_raise_the_signal(self):
+        # Same unrevealing MEANS but a completely different rhythm SHAPE
+        # (highly unstable holds/intervals, long hunting pauses, edits).
+        # Without the richer dimensions this reads as ~0; with them it
+        # must register.
+        avg = [dict(hold=140.0, interval=900.0, cpm=60.0,
+                    hold_std=18.0, interval_std=200.0,
+                    longest_pause=2600.0, backspaces=1)
+               for _ in range(20)]
+        score = self._baseline_and_target(
+            avg, dict(hold=140.0, interval=900.0, cpm=60.0,
+                      hold_std=95.0, interval_std=1100.0,
+                      longest_pause=8600.0, backspaces=9))
+        self.assertGreater(score, 0.2)
+        self.assertLessEqual(score, 1.0)
+
+    def test_login_pin_failures_floor_escalates(self):
+        # Three wrong-PIN attempts before success is nearly never "just a
+        # flub" -- the rightful owner knows the PIN. Even with typing that
+        # otherwise matches baseline, 3+ failures must push the score up.
+        varied = [dict(hold=137.0 + i, interval=1054.0 + 40 * i, cpm=70.0 + i)
+                  for i in range(20)]
+        score = self._baseline_and_target(
+            varied, dict(hold=135.0, interval=1000.0, cpm=72.0, failures=3))
+        self.assertGreater(score, 0.5)
+        # A single flub stays within human-error territory: no floor.
+        score1 = self._baseline_and_target(
+            varied[:], dict(hold=135.0, interval=1000.0, cpm=72.0,
+                            failures=1))
+        self.assertLess(score1, 0.5)
+
+
+class KeystrokePoisonGuardTests(TestCase):
+    """Regression for the repeated-attacker cascade: a session the system
+    flagged as a keystroke anomaly must NOT enter the typing baseline,
+    otherwise the NEXT identical attacker scores below threshold (matching
+    the polluted "normal") and is silently approved. Live path uses the
+    per-session stored score; batch uses the just-computed score.
+
+    Tuned parameters: owner baseline spread (25ms hold, 300ms interval,
+    12 cpm) and attacker (154ms hold, 1250ms interval, 50 cpm) give
+    first-attack f1=0.525 (caught, > 0.5 threshold) but second-attack
+    f2=0.428 (missed) IF a1 was absorbed -- and 0.525 WITH the guard.
+    That is precisely the user-observed: works once, then goes silent."""
+
+    ABS = None  # set from feature_engine below
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from core.feature_engine import KEYSTROKE_BASELINE_ABSORB_THRESHOLD
+        cls.ABS = KEYSTROKE_BASELINE_ABSORB_THRESHOLD
+
+    def _seed_user(self, n=26):
+        """Owner baseline of normal typing; returns (user, priors, now)."""
+        user = make_user()
+        now = timezone.now()
+        import random
+        rng = random.Random(7)
+        priors = []
+        for i in range(n):
+            ps = make_session(
+                user,
+                now - timedelta(minutes=(n - i + 2) * 10),  # strict prior
+                device="dev-A")
+            make_keystroke(ps,
+                           hold=140.0 + rng.uniform(-25, 25),
+                           interval=900.0 + rng.uniform(-300, 300),
+                           cpm=60.0 + rng.uniform(-12, 12))
+            priors.append(ps)
+        return user, priors, now
+
+    def _attack(self, user, ts):
+        s = make_session(user, ts, device="dev-A")
+        make_keystroke(s, hold=154.0, interval=1250.0, cpm=50.0)
+        return s
+
+    def _score_before(self, user_id, session):
+        from core.feature_engine import compute_features, load_user_history
+        h = load_user_history(user_id, before=session.timestamp)
+        return compute_features(session, history=h).keystroke_deviation_score
+
+    def test_guard_keeps_baseline_clean_across_attackers(self):
+        # Live path: a1's scored features are PERSISTED (a BehavioralFeatures
+        # row, as score_session does), so load_user_history reads back its
+        # offending score and excludes a1 from the baseline. The second,
+        # identical attacker must still be flagged.
+        user, priors, now = self._seed_user()
+
+        a1 = self._attack(user, now)
+        f1 = self._score_before(user.user_id, a1)
+        self.assertGreater(f1, self.ABS)          # caught on arrival
+        f1_row = BehavioralFeatures(session=a1,
+                                    keystroke_deviation_score=f1)
+        f1_row.save()
+
+        a2 = self._attack(user, now + timedelta(minutes=5))
+        f2 = self._score_before(user.user_id, a2)
+        self.assertGreater(f2, self.ABS)          # still caught
+
+    def test_without_guard_pollution_suppresses_second_attack(self):
+        # Pre-guard / if the score row is missing: load_user_history treats a1
+        # as teachable (keystroke_deviation=None -> _keystroke_absorb_ok(True))
+        # so a1's novel rhythm folds into "normal" and the identical second
+        # attacker slips under the threshold. This is the exact regression.
+        user, priors, now = self._seed_user()
+
+        a1 = self._attack(user, now)
+        a2 = self._attack(user, now + timedelta(minutes=5))
+
+        f2 = self._score_before(user.user_id, a2)  # a1 unrecorded -> polluted
+        # Compare to the guarded outcome: a1 excluded -> second still caught.
+        f2_clean = self._score_with_guard(user.user_id, a2, excluded={a1.pk})
+        self.assertLess(f2, self.ABS)             # polluted: silent approve
+        self.assertGreater(f2_clean, self.ABS)    # guarded: still caught
+
+    def _score_before(self, user_id, session):
+        from core.feature_engine import compute_features, load_user_history
+        h = load_user_history(user_id, before=session.timestamp)
+        return compute_features(session, history=h).keystroke_deviation_score
+
+    def _score_with_guard(self, user_id, session, excluded):
+        """Like live scoring but forced-guarded: replay history from DB,
+        dropping the excluded sessions entirely (they would have been
+        kept-out by the absorb guard)."""
+        from core.feature_engine import (
+            compute_features, UserHistory, _keystroke_is_plausible)
+        from core.models import Session
+        h = UserHistory()
+        priors = Session.objects.filter(
+            user_id=user_id, timestamp__lt=session.timestamp,
+        ).prefetch_related("keystroke_dynamics").order_by("timestamp")
+        for s in priors:
+            if s.pk in excluded:
+                continue
+            ks = s.keystroke_dynamics.first()
+            if ks is not None and _keystroke_is_plausible(ks):
+                h.observe(s)
+        return compute_features(session, history=h).keystroke_deviation_score
 
 
 class RuleWeightTests(TestCase):

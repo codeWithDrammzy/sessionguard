@@ -173,11 +173,23 @@ class SessionEventView(APIView):
         # login_pin_failures is the login-phase signal added by this task.
         ks_payload = data.get("keystroke")
         if ks_payload and session.channel == "app":
+            def _float(key):
+                raw = ks_payload.get(key)
+                return float(raw) if raw is not None else None
+
+            def _int(key):
+                raw = ks_payload.get(key)
+                return int(raw) if raw is not None else None
+
             try:
                 KeystrokeDynamics.objects.create(
                     session=session,
                     avg_hold_time_ms=float(ks_payload.get("avg_hold_time_ms", 0)),
+                    hold_time_std_ms=_float("hold_time_std_ms"),
                     avg_interval_ms=float(ks_payload.get("avg_interval_ms", 0)),
+                    interval_std_ms=_float("interval_std_ms"),
+                    longest_pause_ms=_float("longest_pause_ms"),
+                    backspace_count=_int("backspace_count"),
                     typing_speed_cpm=float(ks_payload.get("typing_speed_cpm", 0)),
                     login_pin_failures=(
                         int(ks_payload["login_pin_failures"])

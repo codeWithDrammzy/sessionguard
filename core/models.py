@@ -594,8 +594,44 @@ class KeystrokeDynamics(models.Model):
     avg_hold_time_ms = models.FloatField(
         help_text="Mean key hold duration in milliseconds.",
     )
+    hold_time_std_ms = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Std-dev of key hold durations. Rhythm stability: a different "
+            "typist on the same device tends to press keys with a noticeably "
+            "different spread even when the mean looks plausible. NULL when "
+            "the capture produced too few samples to estimate (or old rows)."
+        ),
+    )
     avg_interval_ms = models.FloatField(
         help_text="Mean inter-key interval in milliseconds.",
+    )
+    interval_std_ms = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Std-dev of inter-key intervals. Burstiness: a machine/pecking "
+            "rhythm vs a fluent one. NULL when too few samples to estimate."
+        ),
+    )
+    longest_pause_ms = models.FloatField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Longest gap between consecutive keystrokes. Uncertainty pauses "
+            "while hunting for keys are a strong 'not the routine typist' "
+            "signal. NULL when too few samples to estimate."
+        ),
+    )
+    backspace_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Number of corrections (Backspace/Delete) during the captured "
+            "typing. Frequent corrections signal unfamiliarity with the "
+            "number/amount being entered."
+        ),
     )
     typing_speed_cpm = models.FloatField(
         help_text="Typing speed in characters per minute.",
