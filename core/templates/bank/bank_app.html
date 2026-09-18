@@ -388,6 +388,10 @@ _</div>
           <button class="btn" style="width:auto;padding:11px 18px;"
                   id="ussdSend">Send</button>
         </div>
+        <div style="text-align:center;padding:6px 0 2px;">
+          <button class="btn" style="width:auto;padding:8px 14px;"
+                  id="ussdSimSwitch" title="Simulate using a genuinely different SIM card / location on the USSD channel (a cloned SIM). Purely USSD identity; the app device stays untouched.">Switch SIM / Location</button>
+        </div>
         <div class="fp-mic"></div>
       </div>
     </section>
@@ -429,9 +433,15 @@ _</div>
     }
     if (!USSD) {
       USSD = {
+        sim_id: "SIM-" + randHex(30),
         ip_or_cell_tower_id: "TWR-USSD-" + randHex(8),
         location_geohash: APPDEV.location_geohash,
       };
+      store.set("sg_ussd_device", USSD);
+    } else if (!USSD.sim_id) {
+      // Migrate a pre-fix stored USSD device that has no SIM identity of its
+      // own (it used to borrow APPDEV.sim_id, which froze USSD identity).
+      USSD.sim_id = "SIM-" + randHex(30);
       store.set("sg_ussd_device", USSD);
     }
   }
@@ -1231,6 +1241,7 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   const ussdInput = document.getElementById("ussdInput");
   let uState = "idle";
   let uCtx = {};
+  let uBusy = false;
 
   function ussdGoto(s) {
     uState = s;
@@ -1261,8 +1272,17 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   KSTrack.track(ussdInput);
 
   async function ussdStep() {
-    const v = ussdInput.value.trim();
-    ussdInput.value = "";
+    // Re-entrancy guard (ISSUE 4): while a step is in flight (the awaits
+    // below), a second keypress/click must be IGNORED, otherwise a stale
+    // term()/ussdGoto() from the first invocation can overwrite the screen
+    // AFTER the second advance has changed state -- the desync that left the
+    // input capped at the wrong maxLength (e.g. 1 digit while asking for an
+    // amount / recipient / PIN).
+    if (uBusy) return;
+    uBusy = true;
+    try {
+      const v = ussdInput.value.trim();
+      ussdInput.value = "";
 
     if (uState === "idle") {
       if (v.replace(/\s/g, "") === "*737#") {
@@ -1270,7 +1290,7 @@ const r = await api("/api/bank/login/", {phone_number: phone});
         ussdGoto("menu"); uCtx = {};
         term(menuText());
       } else if (USER) {
-        term(`Invalid code. Dial *737# to begin.\n\n(You are logged in as ${USER.first_name} on the app; your SIM identity is shared.)`);
+        term(`Invalid code. Dial *737# to begin.\n\n(You are logged in as ${USER.first_name} on the app; the USSD channel has its own SIM identity.)`);
       } else {
         term(`Invalid code. Dial *737# to begin.`);
       }
@@ -1302,6 +1322,20 @@ const r = await api("/api/bank/login/", {phone_number: phone});
       }
       case "sm_pin": {
         if (!/^\d{4}$/.test(v)) { term(`PIN must be exactly 4 digits.\n\nEnter your 4-digit PIN:`); break; }
+        // Real server-side verification against the stored transfer-PIN hash
+        // (the SAME endpoint + purpose the app uses). Never just "looks like
+        // 4 digits" -- the wrong PIN never reaches the confirm step.
+        const check = await api("/api/bank/verify-pin/", {
+          user_id: USER.user_id,
+          purpose: "transfer",
+          pin: v,
+        });
+        if (check.error) { term(`Something went wrong. Please try again:\n\nEnter your 4-digit PIN:`); break; }
+        if (check.code === "pin_not_set") {
+          term(`No transfer PIN is set on this account.\n\nSet your 4-digit transfer PIN in the app first, then retry this transfer.`);
+          break;
+        }
+        if (!check.verified) { term(`Incorrect PIN. Try again:\n\nEnter your 4-digit PIN:`); break; }
         uCtx.pin = v;
         ussdGoto("sm_confirm");
         term(`Confirm transfer:\nNGN ${Number(uCtx.amount).toLocaleString()} to ${uCtx.recipient}\n\n1. Confirm\n2. Cancel`);
@@ -1325,16 +1359,26 @@ const r = await api("/api/bank/login/", {phone_number: phone});
         ussdGoto("menu"); uCtx = {};
         term(menuText());
     }
+    } finally {
+      uBusy = false;
+    }
   }
 
   function ussdPayload(extra) {
+    ensureDevices();
+    if (!USSD.sim_id) {
+      // Migrate a pre-fix stored USSD device that has no SIM identity.
+      USSD.sim_id = "SIM-" + randHex(30);
+      store.set("sg_ussd_device", USSD);
+    }
     return {
       user_id: USER.user_id,
       channel: "ussd",
       device_fingerprint: null,
-      sim_id: APPDEV.sim_id,
+      sim_id: USSD.sim_id,
       ip_or_cell_tower_id: USSD.ip_or_cell_tower_id,
       location_geohash: USSD.location_geohash,
+      ...(uCtx.pin ? {pin: uCtx.pin} : {}),
       ...extra,
     };
   }
@@ -1377,6 +1421,32 @@ const r = await api("/api/bank/login/", {phone_number: phone});
   function ussdExit() {
     ussdGoto("idle"); uCtx = {};
     term(`Thank you for banking with SessionGuard.\n\nDial *737# to begin again.`);
+  }
+
+  // Simulate a GENUINELY different SIM card + network location for the USSD
+  // channel (a cloned SIM on a new tower in a new area). This is strictly
+  // USSD identity: it mutates ONLY the sg_ussd_device object and NEVER
+  // touches APPDEV.device_fingerprint / the app's device-switch logic
+  // (switchToNewFingerprint / doSwitchDevice / doSwitchBack stay untouched).
+  // Next USSD session the feature engine sees a sim it has never seen for
+  // this user at a location it has never seen -> sim_change / location_change
+  // genuinely fire, which is the ISSUE 1 / ISSUE 3 root-cause fix.
+  function switchUssdIdentity() {
+    ensureDevices();
+    USSD.sim_id = "SIM-" + randHex(30);
+    USSD.ip_or_cell_tower_id = "TWR-USSD-" + randHex(8);
+    // Cycle the demo geohash grid s1tst0..s1tst9 so a switch is always into a
+    // location the user's history has never seen for the fresh SIM.
+    const lastDigit = parseInt(String(USSD.location_geohash || "s1tst0").slice(-1), 10);
+    const next = (Number.isFinite(lastDigit) ? lastDigit : -1) + 1;
+    USSD.location_geohash = "s1tst" + (next % 10);
+    store.set("sg_ussd_device", USSD);
+    ussdGoto("idle"); uCtx = {}; ussdInput.value = "";
+    term(`USSD SIM & location switched to a cloned-SIM scenario.\n\nThis account is now transacting from a SIM and location the risk engine has never seen -- sim_change + location_change will fire on the next transfer.\n\nDial *737# to begin.`);
+  }
+  const ussdSimSwitchBtn = document.getElementById("ussdSimSwitch");
+  if (ussdSimSwitchBtn) {
+    ussdSimSwitchBtn.addEventListener("click", switchUssdIdentity);
   }
 
   // ==================== LIGHT / DARK MODE TOGGLE ====================

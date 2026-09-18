@@ -421,6 +421,31 @@ def bank_send_money(request):
                     f"available balance is NGN {user.balance:,.2f}.",
             }, status=drf_status.HTTP_200_OK)
 
+    # ---- USSD-CHANNEL-ONLY: transfer PIN gate (real stored-hash check) ----
+    # The USSD simulator sends the customer's 4-digit transfer PIN (entered on
+    # the *737# PIN step) and it is verified HERE against the stored
+    # transfer_pin_hash -- the very same check_password the app's
+    # /api/bank/verify-pin/ uses against the same hash. This is gated on
+    # channel == "ussd": the APP channel never sends a PIN to this endpoint
+    # (it verifies via verify-pin and then calls send-money without one), so
+    # app-channel requests take this branch NEVER and are byte-for-byte
+    # identical. Balance checks (no transaction) and the hold-release path
+    # above stay PIN-free.
+    if txn_payload and request.data.get("channel") == "ussd":
+        if not user.transfer_pin_hash:
+            return Response({
+                "verdict": "block",
+                "customer_message":
+                    "No transfer PIN is set on this account. Set your 4-digit "
+                    "transfer PIN in the app first, then retry this transfer.",
+            }, status=drf_status.HTTP_200_OK)
+        if not check_password(str(request.data.get("pin") or ""),
+                              user.transfer_pin_hash):
+            return Response({
+                "verdict": "block",
+                "customer_message": "Incorrect transfer PIN. Please try again.",
+            }, status=drf_status.HTTP_200_OK)
+
     result = run_scoring_pipeline(user, data)
     verdict = result["verdict"]
     txn = Transaction.objects.filter(
