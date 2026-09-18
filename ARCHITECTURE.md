@@ -366,9 +366,10 @@ The 30-test suite codifies the non-negotiables (what the demo/build would be dis
 ## 14. Git / repo state
 
 - Branch `main`, remote `https://github.com/codeWithDrammzy/sessionguard.git`.
-- HEAD commits: `31ef14e` "Restore seeded snapshot (250 customers / 2237 sessions / 1716 txns)" and `4467e08` "Add behavioural-guarantee test suite" — both pushed. Working tree clean.
-- Tracked: `db.sqlite3` (committed clean snapshot) + `core/trained_model.joblib` (committed). Gitignored/untracked: `offline_queue.jsonl`, `__pycache__`/`.pyc`.
-- Note: LF→CRLF warnings and a benign PowerShell "RemoteException" on `git push` are cosmetic — pushes succeed.
+- HEAD `b5c459f` "Finalize submission baseline: balance checks never scored (read-only short-circuit), family_sharing preset time-of-day pin, 30-test suite, regenerated 250/2285 dataset + retrained model bundle, refreshed eval numbers and docs" — pushed; working tree clean, `main == origin/main`.
+- Immediately prior: `fc2e3d3` "Fix USSD channel bugs: own SIM identity + cloned-SIM switch, real server-side transfer-PIN check, re-entrancy guard".
+- Tracked: `db.sqlite3` (the regenerated 250/2285/1750/1356/52 snapshot) + `core/trained_model.joblib` (retrained bundle). Gitignored/untracked: `offline_queue.jsonl`, `__pycache__`/`.pyc`.
+- Note: LF→CRLF warnings and a benign PowerShell "RemoteException" on `git push` are cosmetic — pushes succeed. `http.postBuffer` is set locally to 150 MiB (the DB carries payloads >1 MiB that can otherwise trip HTTP 408).
 
 ---
 *End of handoff. This document is generated from the committed code and reflects the verified, live behaviour of the system.*
