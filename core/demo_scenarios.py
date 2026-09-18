@@ -464,12 +464,19 @@ def get_preset_scenarios() -> dict:
     scenarios["family_sharing"] = {
         "scenario_label": "Family shared phone",
         "scenario_description":
-            "Same phone/SIM/location as always, but a small transfer to a "
-            "new person -- mum sending airtime money via daughter's phone. "
-            "Legitimate life; at most one gentle verification question.",
+            f"Same phone/SIM/location as always, but a small transfer to a "
+            f"new person -- mum sending airtime money via daughter's phone. "
+            f"Legitimate life; texted at a normal banking hour so it stays "
+            f"APPROVED regardless of the wall-clock time the demo runs.",
         "channel": "app",
         "payload": {
             **base_payload(family_u, anchor_for(family_u, "app")),
+            # Pin the event INSIDE the account's first normal login window
+            # (same replay pattern as patient_attack / genuine_simswap), so
+            # hour_deviation can never fire and push a legitimate life event
+            # into a challenge just because the demo is recorded at an
+            # out-of-window hour.
+            "timestamp": in_window_timestamp(family_u),
             "transaction": {
                 "amount": str((family_u.typical_transfer_min / 4)
                               .quantize(Decimal("0.01"))),

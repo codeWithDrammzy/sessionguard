@@ -17,22 +17,22 @@ SessionGuard adds a second question to every login and transfer: **does this sti
 Every customer has a behavioural profile built from their own past activity: typical login hours, typical transfer amounts, regular recipients, registered devices/SIM, and typing rhythm. Every new session is scored against **that customer's own baseline**, using three layers:
 
 1. **Rules engine** (`core/rules_engine.py`) — a transparent, hand-written checklist. Each warning sign adds fixed points; the total is banded into `APPROVE` (0–29), `CHALLENGE` (30–59), or `BLOCK` (60+).
-2. **Machine learning model** (`core/ml_model.py`) — a Logistic Regression classifier trained on 11 behavioural features, chosen deliberately for interpretability. It independently learned that a first-time device is the single strongest predictor of takeover — exactly the signal that catches a "patient" attacker who changes only their device while keeping everything else normal.
+2. **Machine learning model** (`core/ml_model.py`) — a Logistic Regression classifier trained on 11 behavioural features, chosen deliberately for interpretability. It independently learned that a first-time SIM is the single strongest predictor of takeover, with a first-time device close behind — exactly the signals that catch a "patient" attacker who changes only their device while keeping everything else normal.
 3. **Hybrid scorer** (`core/hybrid_scorer.py`) — the final score is the higher of the two layers. A **fairness override** then checks: has only the hardware changed, while amount, time, and location remain normal? If so, a `BLOCK` is automatically softened to `CHALLENGE` — a genuine customer (e.g. one who lost their phone) is never locked out, while an actual attacker is still stopped from moving money without confirmation.
 
 Full architecture detail is in [`SessionGuard_Architecture.docx`](./SessionGuard_Architecture.docx) (or the equivalent doc in this repo) and the technical write-up submitted alongside this project.
 
 ## Key Results
 
-| Scorer | Precision | Recall | FPR |
-|---|---|---|---|
-| Rules only | 100.0% | 59.5% | 0.0% |
-| ML only (held-out test set) | 100.0% | 87.5% | 0.0% |
-| Hybrid (full dataset, illustrative) | 100.0% | 59.5% (see note) | 0.0% |
+Measured with a **strict, de-leaked evaluation**: 5×10 repeated stratified cross-validation (50 folds) where every held-out session's features are recomputed using only training-fold history — no leaks, no in-sample optimism. Full table and summed confusion matrices are in `ARCHITECTURE.md §11a`.
 
-**Note:** operational catch rate (block **or** challenge) on all 42 known attacks is 100% — no attack is silently approved. Across all 10 legitimate anomalies (family device sharing, genuine SIM-swap recovery), zero result in a hard block.
+| Scorer | Precision | Recall | F1 | PR-AUC |
+|---|---|---|---|---|
+| Rules only (CV) | 100.0% ± 0.0 | 57.6% ± 14.9 | 0.719 | **0.827 ± 0.090** |
+| ML only (CV) | 60.3% ± 9.7 | 98.8% ± 3.6 | 0.744 | **0.923 ± 0.054** |
+| Hybrid (CV) | 99.3% ± 3.6 | 51.9% ± 16.5 | 0.666 | **0.922 ± 0.057** |
 
-**Honestly stated limitation:** the ML component alone has a genuine held-out evaluation; the full hybrid pipeline has so far been evaluated on the complete dataset it partly trained on, not a strict held-out split. This is our acknowledged next step, not a hidden gap. See the technical write-up for the full list of known limitations.
+**Read this honestly:** PR-AUC (average precision) is the primary metric at a 1.84% positive rate. The high-recall ML model over-blocks (it hard-blocks most genuine SIM-swap recoveries 40/40); the hybrid's fairness override fixes that — restoring precision to 99.3% and cutting SIM-swap false-blocks to **0/40** — while keeping the *operational catch rate* (block **or** challenge, both of which stop a transfer until step-up verification) at **99.3%** of attacks. Rules running **alone** never hard-block any of the 10 legitimate anomalies (0 false blocks in 100 pooled anomaly folds); the hybrid retains 2 residual family false-blocks over 50 folds (documented limitation — the override legally cannot fire when no device/SIM changed).
 
 ## Real-World Conditions Handled
 
@@ -91,15 +91,17 @@ Then visit:
 - `http://127.0.0.1:8000/bank/` — the mobile app / USSD simulator
 - `http://127.0.0.1:8000/demo/` — the Control Room judge dashboard
 
+Tests: `python manage.py test core` — a 30-test behavioural-guarantee suite (feature causality, fairness override, offline logic, USSD transfer-PIN guard, read-only balance checks, preset stability).
+
 Built entirely with free, open-source tools — Python, Django, Django REST Framework, scikit-learn, SQLite. No paid services or infrastructure required.
 
 ## Known Limitations (Stated Honestly)
 
-- The full hybrid pipeline has not yet been evaluated on a strict held-out split (only the ML component has a true unseen-data result).
 - Only 42 labelled attacks exist in the training dataset — enough to demonstrate the approach, not yet a statistically rigorous sample.
 - The step-up confirmation step is simulated (accepts any well-formed code) to demonstrate the flow; a production system would connect a real SMS/USSD OTP provider, ideally on a channel independent of the primary device.
 - New customers are scored "blind" on typing rhythm until roughly 5 prior sessions exist.
-- No automated test suite yet — only a manual smoke test (`smoke_test_api.py`).
+- The context-normalcy override can only fire when a device/SIM actually changed; 2 residual family false-blocks remain in hybrid across 50 CV folds.
+- The `wlPhone` login field on the demo app is not tracked by the JS keystroke recorder (known coverage gap for login-screen typing).
 
 See the full technical write-up for the complete limitations discussion and what we'd do next for each.
 

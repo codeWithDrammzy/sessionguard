@@ -357,6 +357,23 @@ def bank_send_money(request):
             "balance": str(user.balance),
         })
 
+    # ---- READ-ONLY BALANCE CHECK (no transaction) ----------------------
+    # Checking your own balance moves NO money, so it is NEVER run through
+    # the fraud-scoring pipeline: a changed SIM/location must not be able to
+    # make an innocent read-only query fail with a challenge/block (the USSD
+    # "Check Balance" dead-end). Only money-moving actions -- transfers --
+    # are ever scored. The APP channel reads balance from /api/bank/state/
+    # (also unscored), so this short-circuit only changes the USSD path and
+    # keeps both channels identical in spirit (see bank_deposit: incoming
+    # money is likewise deliberately not scored).
+    if not request.data.get("transaction"):
+        return Response({
+            "verdict": "approve",
+            "balance": str(user.balance),
+            "customer_message":
+                f"Your available balance is NGN {user.balance:,.2f}.",
+        }, status=drf_status.HTTP_200_OK)
+
     # ---- normal scoring path -------------------------------------------
     data = {
         "user_id": str(user.user_id),

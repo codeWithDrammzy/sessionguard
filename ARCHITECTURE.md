@@ -126,7 +126,7 @@ Rationale (Nigerian context): a new phone (family sharing) or a new SIM (routine
 - `inject_attacks.py` — attack sessions labelled via `FraudLabel`. **Seed 44.** Attack archetypes: `credential_theft` (loud), `patient_low_and_slow` (quiet device-only), `sim_swap_takeover` (USSD-native).
 - `inject_legitimate_anomalies.py` — `family_shared_phone` (6) + `genuine_sim_swap` (4) **Seed 45** (four fully independent RNG streams so no dataset can silently correlate with another).
 
-**DB snapshot:** committed `db.sqlite3` = **250 customers / 2237 sessions / 1716 transactions** (matches `reset_demo` output and DEMO_SCRIPT.md). `core/trained_model.joblib` is the committed trained bundle (42 positive examples).
+**DB snapshot:** committed `db.sqlite3` = **250 customers / 2285 sessions / 1750 transactions / 1356 keystroke records / 52 labels** (42 attacks + 10 legitimate anomalies). Regenerate deterministically any time from the four committed generators (seeds 42–45): delete `db.sqlite3`, `migrate`, then run them in order, then backfill features (§12). `core/trained_model.joblib` is the committed trained bundle (42 positive examples), retrained on the shipped baseline. `BehavioralFeatures` are computed by the batch feature engine at dataset-build time (1:1 with `Session`) and live at scoring time.
 
 ---
 
@@ -161,7 +161,7 @@ WEIGHTS = {
   "hour_deviation_max":       15,   # scaled: score * max
   "amount_deviation_max":     20,
   "menu_timing_deviation_max":15,   # USSD pacing
-  "keystroke_deviation_max":  12,
+  "keystroke_deviation_max":  40,
   "velocity_per_extra_session": 8,  # per txn BEYOND the first in 5-min window
   "new_recipient_alone":       3,   # deliberately tiny: normal life
 }
@@ -172,6 +172,7 @@ WEIGHTS = {
 - `new_recipient_alone` is deliberately just +3: alone it never moves a verdict.
 - Velocity counts only sessions **beyond the first** in the window (`max(0, count-1) * 8`) so a single transfer is not punished.
 - Scaled rules (hour/amount/menu-timing) contribute `round(score * max_points)`.
+- At full deviation `keystroke_deviation_max=40` means keystrokes **alone** can reach the challenge band (≥30) but never block (< 60) — friction without lockout for a novel-but-consistent typist on a trusted device.
 
 ---
 
@@ -204,7 +205,7 @@ Only "block" is softened, by exactly one level, **never** the reverse, and never
 - **Model:** interpretable `LogisticRegression` (choice justified: judges/reviewers can read the coefficients and defend the logic — no black box).
 - **Features (11 FEATURE_COLUMNS):** the `BehavioralFeatures` vector (booleans + scaled scores; `None` → 0.0, `bool` → int — handled inside `predict_risk`).
 - **Trained on 80%** of the labelled dataset; the committed bundle has **42 positive (attack) training rows**.
-- **Committed coefficients** (strongest → weakest): `sim_change +6.48`, `device_change +4.84`, `keystroke +3.33`, `new_recipient +1.79`, `menu_timing +0.96`, `impossible_travel +0.60`, `location -0.41`, `amount -0.20`, `combined +0.20`, `hour -0.07`, `velocity -0.03`.
+- **Committed coefficients** (retrained bundle, strongest → weakest): `sim_change +6.48`, `device_change +5.40`, `keystroke +3.30`, `new_recipient +1.56`, `menu_timing +1.16`, `impossible_travel +0.91`, `location -0.42`, `combined +0.30`, `hour -0.05`, `velocity -0.01`, `amount +0.00`.
 - **Continuous learning:** `ConfirmedOutcome` rows from the Control Room (judge/analyst confirms "was this really an attack?") are folded in on the next `python manage.py retrain_model`, and `reload_bundle()` makes a running server adopt the new model on its next request.
 
 ---
@@ -253,41 +254,42 @@ session). This is the methodology a judge should be pointed at.
 
 | Scorer | Precision (mean ± std) | Recall (mean ± std) | F1 (mean ± std) | **PR-AUC** (mean ± std) |
 |---|---|---|---|---|
-| **rules** | 1.000 ± 0.000 | 0.559 ± 0.149 | 0.706 ± 0.122 | **0.876 ± 0.086** |
-| **ml** | 0.610 ± 0.116 | 0.984 ± 0.050 | 0.745 ± 0.082 | **0.929 ± 0.071** |
-| **hybrid** | 0.980 ± 0.068 | 0.475 ± 0.142 | 0.628 ± 0.133 | **0.933 ± 0.063** |
+| **rules** | 1.000 ± 0.000 | 0.576 ± 0.149 | 0.719 ± 0.124 | **0.827 ± 0.090** |
+| **ml** | 0.603 ± 0.097 | 0.988 ± 0.036 | 0.744 ± 0.076 | **0.923 ± 0.054** |
+| **hybrid** | 0.993 ± 0.036 | 0.519 ± 0.165 | 0.666 ± 0.145 | **0.922 ± 0.057** |
 
 Summed confusion matrices (hard-block = positive) across all 50 folds:
 
 | Scorer | TN | FP | FN | TP | pooled prec | pooled recall |
 |---|---|---|---|---|---|---|
-| rules | 21950 | 0 | 185 | 235 | 1.0000 | 0.5595 |
-| ml   | 21661 | 289 | 7 | 413 | 0.5883 | 0.9833 |
-| hybrid | 21946 | 4 | 220 | 200 | 0.9804 | 0.4762 |
+| rules | 22430 | 0 | 179 | 241 | 1.0000 | 0.5738 |
+| ml   | 22141 | 289 | 5 | 415 | 0.5895 | 0.9881 |
+| hybrid | 22428 | 2 | 202 | 218 | 0.9909 | 0.5190 |
 
 Pooled safety checks (summed across 50 folds):
 
 | Scorer | attacks caught (block+challenge) | genuine SIM-swap false-block | family false-block |
 |---|---|---|---|
-| rules | 253/420 (60.2%) | 0/40 | 0/60 |
-| ml   | 413/420 (98.3%) | 40/40 | 6/60 |
-| hybrid | 417/420 (99.3%) | **0/40** | 4/60 |
+| rules | 341/420 (81.2%) | 0/40 | 0/60 |
+| ml   | 415/420 (98.8%) | 40/40 | 3/60 |
+| hybrid | 417/420 (99.3%) | **0/40** | 2/60 |
 
 **Reading these honestly (the 42-positive reality):**
-- **PR-AUC is the primary metric.** At a 1.88% positive rate, precision/accuracy alone are
+- **PR-AUC is the primary metric.** At a 1.84% positive rate, precision/accuracy alone are
   misleading; average-precision summarises the precision across *all* thresholds.
-- The ML model's high recall (98.4%) comes with real out-of-fold false blocks (FP=289),
+- The ML model's high recall (98.8%) comes with real out-of-fold false blocks (FP=289),
   including over-blocking genuine SIM-swap recoveries (40/40) — the exact failure the
   context-normalcy override was built to fix.
-- The hybrid restores precision to ~98% AND keeps sim-swap false-block at **0/40**, at the
-  cost of hard-block recall (0.475) because many blocks are softened to challenge —
+- The hybrid restores precision to 99.3% AND keeps sim-swap false-block at **0/40**, at the
+  cost of hard-block recall (0.519) because many blocks are softened to challenge —
   but the *attacks-caught* rate (block+challenge, which operationally still stops the
   transfer until step-up verification) is **99.3%**.
-- Residual: 4 family false-blocks remain in hybrid. These are family-shared-phone sessions
-  where the ML hard-blocked despite device/SIM being unchanged (so the override — which
-  requires a device/SIM change — cannot legally fire). Honest known limitation.
-- Rules precision of 100%/FP=0 is real and now measured *out-of-fold* (40/40 sim-swap and
-  60/60 family never hard-blocked by rules).
+- Residual: 2 family false-blocks remain in hybrid (summed over 50 folds — the model
+  occasionally hard-blocks a family-shared-phone session where device/SIM are unchanged,
+  so the override — which requires a device/SIM change — cannot legally fire). Honest
+  known limitation.
+- Rules precision of 100%/FP=0 is real and now measured *out-of-fold* (0/40 sim-swap and
+  0/60 family never hard-blocked by rules).
 
 ### 11b. Previously reported numbers (as-run: in-sample / single-split)
 
@@ -309,16 +311,16 @@ was real but only previously shown in-sample; CV confirms it while adding varian
 - **Operational catch rate** counts challenge+block together (a challenge still stops the transfer until verification passes).
 - **Run the current numbers:** `python core/eval_cv.py --splits 5 --repeats 10` (see §12).
 
-**Diagnostic finding (expected, not a bug):** fast typing alone is a weak signal. Below `MIN_KEYSTROKE_BASELINE_SESSIONS=5` priors, `keystroke_deviation_score=None`; even at max, `keystroke_deviation_max=12 <` the challenge threshold (30), so keystrokes alone never decide a verdict — they only add weight in combination. Also the `wlPhone` login field is **not** tracked by the JS keystroke recorder (a genuine, known coverage gap for login-screen typing).
+**Diagnostic finding (expected, not a bug):** fast typing alone is a weak signal. Below `MIN_KEYSTROKE_BASELINE_SESSIONS=5` priors, `keystroke_deviation_score=None`; at max, `keystroke_deviation_max=40` lets keystrokes alone reach **challenge** (40 ≥ 30) but never **block** (< 60) — friction without lockout. Also the `wlPhone` login field is **not** tracked by the JS keystroke recorder (a genuine, known coverage gap for login-screen typing).
 
 ---
 
 ## 12. How to run / verify
 
 ```bash
-# Django checks + the 10-test behavioural-guarantee suite
+# Django checks + the 30-test behavioural-guarantee suite
 python manage.py check
-python manage.py test core            # 10 tests, ~0.1s, in-memory DB
+python manage.py test core            # 30 tests, ~2s, in-memory DB
 python smoke_test_api.py              # end-to-end pipeline smoke test
 
 # Dataset generators (reproducible, independent seeds 42/43/44/45)
@@ -326,7 +328,10 @@ python dataset_generator/generate_users.py
 python dataset_generator/generate_sessions.py
 python dataset_generator/inject_attacks.py
 python dataset_generator/inject_legitimate_anomalies.py
-python dataset_generator/inject_legitimate_anomalies.py   # (anomalies)
+# then backfill the 1:1 BehavioralFeatures rows for every session:
+python manage.py shell -c "from core.feature_engine import compute_features_for_all_sessions; compute_features_for_all_sessions()"
+# and, to keep the committed bundle consistent with the data:
+python manage.py retrain_model
 
 # Evaluation reports (self-contained prints)
 python core/rules_engine.py
@@ -335,7 +340,7 @@ python core/eval_cv.py --splits 5 --repeats 10   # PROPER out-of-sample CV (de-l
 
 # Operations
 python manage.py retrain_model        # fold confirmed outcomes into the ML model
-python manage.py reset_demo           # restore the clean 250-customer snapshot
+python manage.py reset_demo           # demo hygiene: purge live-demo/test debris
 python manage.py reset_demo --check   # preview what reset would remove
 
 # Local dev server -> http://127.0.0.1:8000/bank/ and /demo/
@@ -346,12 +351,15 @@ python manage.py runserver
 
 ## 13. Testing philosophy (`core/tests.py`) — the "behavioural guarantees"
 
-The 10-test suite codifies the non-negotiables (what the demo/build would be dishonest without):
+The 30-test suite codifies the non-negotiables (what the demo/build would be dishonest without):
 - Feature **causality** (changing a raw signal changes the right feature).
 - Keystroke **baseline gate** (fewer than 5 priors → score is None).
 - Hybrid **context override** (hardware change + normal context → challenge, *not* block; attack + abnormal context → block).
 - Offline **never blocks**.
 - ML **vectorisation** (None→0.0, bool→int, FEATURE_COLUMNS match the bundle) and rules weight logic.
+- **USSD transfer PIN is server-verified** (cloned-SIM switch cannot bypass the guard).
+- **Balance checks are never scored** (read-only ledger short-circuit: approve + balance, zero `Session` rows).
+- **`family_sharing` preset is wall-clock invariant** (in-window timestamp pin ⇒ approve/18/0.03 at any hour of day).
 
 ---
 

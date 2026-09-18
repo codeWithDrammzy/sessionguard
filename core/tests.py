@@ -728,3 +728,87 @@ class ControlRoomPurgeSafetyTests(TestCase):
         self.assertFalse(Session.objects.filter(pk=s.pk).exists())
         self.assertFalse(Transaction.objects.filter(session=s).exists())
         self.assertFalse(KeystrokeDynamics.objects.filter(session=s).exists())
+
+
+class BalanceCheckNeverScoredTests(TestCase):
+    """A read-only balance check must NEVER be run through the fraud-scoring
+    pipeline. Regression for the USSD dead-end: after a cloned-SIM/SIM-switch
+    scenario the old flow scored 'Check Balance' (no transaction) and a
+    challenge verdict left the customer with no OTP path -- just a 'Balance
+    unavailable' message. Reading your own balance moves no money, so it is
+    always permitted regardless of device/SIM/location change."""
+
+    def test_balance_check_with_fresh_sim_always_approves(self):
+        user = make_user()
+        # Every signal screams 'unseen device+SIM+location' -- exactly the
+        # shape that WOULD challenge/block a scored transfer.
+        res = self.client.post(
+            "/api/bank/send-money/",
+            {
+                "user_id": str(user.user_id),
+                "channel": "app",
+                "device_fingerprint": "dev-fresh",
+                "sim_id": "SIM-fresh-swap",
+                "ip_or_cell_tower_id": "41.2.3.4",
+                "location_geohash": "s1tstzz",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["verdict"], "approve")
+        self.assertIn("balance", body)
+
+    def test_balance_check_creates_no_session(self):
+        """Proof it bypassed scoring entirely: no Session is persisted."""
+        user = make_user()
+        self.client.post(
+            "/api/bank/send-money/",
+            {
+                "user_id": str(user.user_id),
+                "channel": "ussd",
+                "device_fingerprint": None,
+                "sim_id": "SIM-fresh-swap",
+                "ip_or_cell_tower_id": "TWR-deadbeef",
+                "location_geohash": "s1tstzz",
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(Session.objects.filter(user=user).count(), 0)
+
+
+class DemoScenarioFixTests(TestCase):
+    """The family_sharing Control Room preset must be time-of-day
+    independent: its event timestamp is pinned inside the account's normal
+    login window (same replay pattern as patient_attack / genuine_simswap)
+    so hour_deviation can never push a legitimate life event into a
+    challenge just because the demo is being recorded out-of-window."""
+
+    def test_family_preset_timestamp_pinned_in_window(self):
+        from datetime import timedelta
+
+        from django.utils.dateparse import parse_datetime
+
+        from core.demo_scenarios import get_preset_scenarios
+
+        user = make_user(
+            typical_login_hours=[[8, 22]],
+            typical_transfer_min=1000,
+            typical_transfer_max=500000,
+            typical_recipients=["BNF-0001"],
+            channel_preference=BankUser.CHANNEL_APP,
+        )
+        make_session(user, timezone.now() - timedelta(days=1),
+                     device="dev-A", sim="sim-1", geo="s1tstzz",
+                     channel="app")
+
+        scenarios = get_preset_scenarios()
+        fam = scenarios["family_sharing"]
+        ts = parse_datetime(fam["payload"]["timestamp"])
+        self.assertIsNotNone(ts)
+        self.assertTrue(
+            any(s <= ts.hour < e for s, e in user.typical_login_hours),
+            "family_sharing timestamp must fall inside the account's "
+            "normal login window so the verdict never depends on the "
+            "wall-clock demo hour",
+        )

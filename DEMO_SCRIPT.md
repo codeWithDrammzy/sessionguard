@@ -6,7 +6,7 @@ script is ~5 minutes; each Control Room click is one API call.
 
 Before the demo, from the project root:
 
-    python manage.py reset_demo     # -> exactly 250 customers, 2237 sessions
+    python manage.py reset_demo     # demo hygiene; committed baseline = 250 customers / 2285 sessions
     python manage.py runserver      # start the server
 
 Need a fallback if runserver is already live with stale code? Stop it, run
@@ -49,13 +49,15 @@ Spoken point:
 Click **"Patient attacker"** (patient_attack).
 
 Expected:
-- Verdict **challenge** (not block), score **46**, ML **0.46**.
+- Verdict **challenge** (not block), score **97**, ML **0.97**.
 
 Spoken point (the honest, high-value story):
 - "Only ONE thing is odd: the **device** changed. SIM, location, hour, amount
-  are all boringly normal. A simple rules engine scores this 0/12 — it would
-  wave the attacker through. Our learned model sees the lone device change and
-  draws **friction, not a lockout**."
+  are all boringly normal. In the historical dataset a simple rules engine
+  catches 0/12 patient attacks — it would wave most of them through; the ML
+  model catches 12/12. And on this demo replay the rules' keystroke+device
+  signal (50) joins the model's 0.97, landing on **challenge — friction, not
+  a lockout**."
 - "Why challenge and not block? Because this shape also describes a genuine
   customer on a new phone. We **soften** it rather than freeze the account."
 - Then confirm: click **"✓ Confirmed fraud"** on this event.
@@ -89,6 +91,9 @@ Spoken point:
 - "Mum sending money via her daughter's phone. Same SIM, same location, small
   amount, one new recipient. Approved — a customer segment the brief called
   out as routinely mis-flagged."
+- Robustness note: this preset is **time-of-day invariant** — it scores
+  approve/18/0.03 at any hour of day (the event's timestamp is pinned in-window),
+  so it reproduces identically no matter when you demo.
 
 ---
 
@@ -151,9 +156,12 @@ around: `python manage.py reset_demo`.
 1. **Small labeled set.** Only 42 synthetic attack rows; ML test metrics are
    single-attack steps. That's why rules stay the primary detector and ML is a
    targeted catch for the patient cases. (See `ml_model.py` docstring.)
-2. **Hybrid eval is not a strict held-out test.** The three-way comparison is
-   labelled "illustrative". The rules baseline is genuinely held-out; the ML
-   component's held-out numbers are in its threshold sweep.
+2. **The evaluation is a strict, de-leaked CV.** 5×10 repeated stratified
+   cross-validation (50 folds) on the shipped baseline (2285 sessions, 42
+   positives): each held-out session's features are recomputed using only
+   training-fold history — no leaks. PR-AUC is the primary metric; hybrid
+   catches 99.3% of attacks operationally with 0/40 SIM-swap false-blocks.
+   (Table and confusion matrices: `ARCHITECTURE.md §11a`.)
 3. **Keystroke rhythm needs history** — brand-new app users are scored blind on
    that signal until ~5 prior keystroke sessions exist (a documented default).
 4. **The demo step-up is simulated** — the challenge holds and the OTP box
