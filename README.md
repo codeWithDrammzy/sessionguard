@@ -1,6 +1,6 @@
 # SessionGuard
 
-**Real-time behavioural detection of account takeover — mobile app and USSD banking.**
+**Demonstrates a behavioural risk detection pipeline for identifying suspicious account activity and applying graduated responses — mobile app and USSD banking.**
 
 Built for the ICSC 2026 Universities Hackathon — Track A: Financial Services & Digital Payments — Challenge: *Spotting Account Takeover from Behaviour*. Team: **BlueTeam**.
 
@@ -26,13 +26,17 @@ Full architecture detail is in [`SessionGuard_Architecture.docx`](./SessionGuard
 
 Measured with a **strict, de-leaked evaluation**: 5×10 repeated stratified cross-validation (50 folds) where every held-out session's features are recomputed using only training-fold history — no leaks, no in-sample optimism. Full table and summed confusion matrices are in `ARCHITECTURE.md §11a`.
 
-| Scorer | Precision | Recall | F1 | PR-AUC |
-|---|---|---|---|---|
-| Rules only (CV) | 100.0% ± 0.0 | 57.6% ± 14.9 | 0.719 | **0.827 ± 0.090** |
-| ML only (CV) | 60.3% ± 9.7 | 98.8% ± 3.6 | 0.744 | **0.923 ± 0.054** |
-| Hybrid (CV) | 99.3% ± 3.6 | 51.9% ± 16.5 | 0.666 | **0.922 ± 0.057** |
+| Scorer | Precision | Recall | F1 | PR-AUC | FPR* |
+|---|---|---|---|---|---|
+| Rules only (CV) | 100.0% ± 0.0 | 57.6% ± 14.9 | 0.719 | **0.827 ± 0.090** | 0.000% |
+| ML only (CV) | 60.3% ± 9.7 | 98.8% ± 3.6 | 0.744 | **0.923 ± 0.054** | 1.29% |
+| Hybrid (CV) | 99.3% ± 3.6 | 51.9% ± 16.5 | 0.666 | **0.922 ± 0.057** | 0.009% |
+
+\*False positive rate = benign sessions hard-blocked / all benign sessions, pooled over the same 50 folds: 0 / 22430, 289 / 22430, and 2 / 22430 for rules, ML, and hybrid respectively. A `challenge` stops a transfer until step-up verification but is **not** counted as a false positive here.
 
 **Read this honestly:** PR-AUC (average precision) is the primary metric at a 1.84% positive rate. The high-recall ML model over-blocks (it hard-blocks most genuine SIM-swap recoveries 40/40); the hybrid's fairness override fixes that — restoring precision to 99.3% and cutting SIM-swap false-blocks to **0/40** — while keeping the *operational catch rate* (block **or** challenge, both of which stop a transfer until step-up verification) at **99.3%** of attacks. Rules running **alone** never hard-block any of the 10 legitimate anomalies (0 false blocks in 100 pooled anomaly folds); the hybrid retains 2 residual family false-blocks over 50 folds (documented limitation — the override legally cannot fire when no device/SIM changed).
+
+**Reproducing these numbers:** they are measured on the committed 250-customer / 2285-session baseline snapshot. Run `python manage.py reset_demo` **before** re-running the headline metrics to restore that baseline — any demo or smoke-test traffic added to the DB shifts the figures (with just 3 extra unlabelled sessions, rules precision drops to ~96.6% and hybrid to ~95.1%). Then run: `python core/eval_cv.py --splits 5 --repeats 10`.
 
 ## Real-World Conditions Handled
 

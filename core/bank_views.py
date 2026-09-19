@@ -91,10 +91,12 @@ def phone_to_account_number(phone_number) -> str:
 
 
 def _new_reference() -> str:
+    """Fresh short transaction reference for a session."""
     return "SG-" + uuid.uuid4().hex[:8].upper()
 
 
 def _recent_activity(user, limit=8):
+    """Most recent visible transactions for the app's activity feed."""
     txns = (Transaction.objects
             .filter(session__user=user)
             .exclude(reference="", outcome="approve")  # hide legacy rows
@@ -347,6 +349,26 @@ def bank_send_money(request):
         if txn:
             txn.outcome = Transaction.OUTCOME_APPROVE
             txn.save()
+        # The customer just PROVED themselves via SMS step-up: fold this
+        # session's context into their verified-behaviour profile (idempotent
+        # -- the OneToOne on Session makes a replayed release a no-op).
+        secondary = {
+            "secondary_profile_configured": False,
+            "secondary_verification_count": 0,
+        }
+        if txn is not None:
+            from core.secondary_behavior import (
+                MIN_VERIFICATIONS_TO_CONFIGURE, record_verification,
+            )
+            _, profile = record_verification(txn.session)
+            if profile is not None:
+                secondary["secondary_verification_count"] = (
+                    profile.verification_count
+                )
+                secondary["secondary_profile_configured"] = (
+                    profile.verification_count
+                    >= MIN_VERIFICATIONS_TO_CONFIGURE
+                )
         return Response({
             "verdict": "approve",
             "released_hold": True,
@@ -355,6 +377,10 @@ def bank_send_money(request):
                 f"Verification successful. Your transfer of NGN "
                 f"{amount:,.2f} to {hold['recipient']} is complete.",
             "balance": str(user.balance),
+            "secondary_profile_configured":
+                secondary["secondary_profile_configured"],
+            "secondary_verification_count":
+                secondary["secondary_verification_count"],
         })
 
     # ---- READ-ONLY BALANCE CHECK (no transaction) ----------------------

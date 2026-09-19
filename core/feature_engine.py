@@ -172,6 +172,7 @@ class UserHistory:
 
     @property
     def has_prior(self):
+        """True once any baseline history (rooted device/sim/location) exists."""
         return (
             bool(self.device_counts)
             or bool(self.sim_counts)

@@ -101,11 +101,11 @@ Spoken point:
 Click **"Normal login"** (normal_login).
 
 Expected:
-- Verdict **approve**, score **1**, ML **0.01**.
+- Verdict **approve**, score **≈ 2** (can read 1–2 depending on the hour-of-day signal — the stable claim is a low-score approve), ML **0.01**.
 
 Spoken point:
 - "And the great majority of traffic — an ordinary login, ordinary transfer —
-  sails through with a score of 1. The system is strict where it must be,
+  sails through with a score of about 2. The system is strict where it must be,
   invisible where it should be."
 
 ---

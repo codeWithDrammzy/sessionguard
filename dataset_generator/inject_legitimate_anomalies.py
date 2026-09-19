@@ -267,6 +267,7 @@ def build_simswap_session(rng, profile, now):
 
 
 def main():
+    """Inject the seeded legitimate-anomaly sessions (familiar fingerprints)."""
     rng = random.Random(SEED)
     # Same postdating anchor as inject_attacks.py: anomaly sessions must
     # never predate the latest baseline row, even when the baseline snapshot

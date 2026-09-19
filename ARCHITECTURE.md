@@ -95,7 +95,7 @@ Rationale (Nigerian context): a new phone (family sharing) or a new SIM (routine
 - `device_change_flag`, `sim_change_flag`, `location_change_flag`
 - `combined_device_location_flag` (the invariant above)
 - `new_recipient_flag`
-- `velocity_count_5min` (transactions in rolling 5-min window)
+- `velocity_count_5min` (transactions in the rolling 2-minute window; name retained for migration/bundle compatibility)
 - `menu_timing_deviation_score` (USSD only; NULL on app)
 - `keystroke_deviation_score` (app only; NULL on USSD / first few app sessions)
 - `impossible_travel_flag` (implied speed from immediately-prior session > 900 km/h across a genuinely long distance)
@@ -118,7 +118,7 @@ Rationale (Nigerian context): a new phone (family sharing) or a new SIM (routine
 | `demo_views.py` + `demo_scenarios.py` | Demo-only Control Room: `/api/demo/scenarios/` (five one-click presets), `/api/demo/toggle-offline/`, `/api/demo/confirm-outcome/`. Presets built from REAL DB rows and pushed through the real API (no mocks). `DEMO_TOWER` marker lets demo traffic be purged. |
 | `geohash_util.py` | Stdlib-only geohash encode/decode + haversine. Shared by generators and feature engine so both agree on cell boundaries. Nigerian city centres + far-international attack cities. |
 | `management/commands/retrain_model.py` | Re-runs ML training folding in `ConfirmedOutcome` rows; prints eval; saves bundle; optional `--no-reload`. |
-| `management/commands/reset_demo.py` | Demo-hygiene: deletes browser test accounts, demo/smoke debris, same-day unlabelled sessions, clears offline queue. Never touches `FraudLabel` rows. `--check` pre-views. |
+| `management/commands/reset_demo.py` | Demo-hygiene: deletes browser test accounts and marker-tagged demo/smoke debris (reserved-marker drop-check only), clears the offline queue. Never touches `FraudLabel` rows, seeded sessions, or unmarked traffic. `--check` pre-views. |
 
 **Dataset generator (separate, committed):** `dataset_generator/`
 - `generate_users.py` — 250 `BankUser` baselines. Seed 42.
@@ -162,7 +162,7 @@ WEIGHTS = {
   "amount_deviation_max":     20,
   "menu_timing_deviation_max":15,   # USSD pacing
   "keystroke_deviation_max":  40,
-  "velocity_per_extra_session": 8,  # per txn BEYOND the first in 5-min window
+  "velocity_per_extra_session": 8,  # per txn BEYOND the first in the 2-minute velocity window
   "new_recipient_alone":       3,   # deliberately tiny: normal life
 }
 ```
@@ -192,7 +192,7 @@ WEIGHTS = {
    ```
    `is_context_normal()` is true when the session's behaviour besides the hardware change is ordinary: `amount_deviation_score ≤ 0.15`, `hour_deviation_score ≤ 0.15` (with `impossible_travel_flag` forced to veto, and new-recipient deliberately **excluded** from normalcy).
 
-**Why the override exists:** the ML model, trained on this dataset, learned "device/SIM changed → fraud" so aggressively (coeffs ≈ +6.6/+5.9) that genuine SIM-swap recoveries scored p≥0.94 and would have been blocked 4/4. The rules engine approved those but was blind to patient attacks. Insight: **hardware change is ambiguous on its own** — its meaning depends on whether everything else looks ordinary.
+**Why the override exists:** the ML model, trained on this dataset, learned "device/SIM changed → fraud" so aggressively (retrained-bundle coeffs, see §8: sim_change +6.48, device_change +5.40) that genuine SIM-swap recoveries scored p≥0.94 and would have been blocked 4/4. The rules engine approved those but was blind to patient attacks. Insight: **hardware change is ambiguous on its own** — its meaning depends on whether everything else looks ordinary.
 - *Patient attacker* → changes hardware, careful elsewhere → deserves interception (gets challenge/friction).
 - *Genuine recovery* → changes hardware, everything else IS their normal life → must never hard-block (gets challenge, an OTP, not a frozen account).
 

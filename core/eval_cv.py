@@ -106,6 +106,7 @@ def _is_attack(session, labels):
 
 
 def load_raw_sessions():
+    """Load every session plus its label/kind and the binary y array."""
     labels = {
         row["session_id"]: row
         for row in FraudLabel.objects.values(
@@ -137,6 +138,7 @@ def load_raw_sessions():
 
 
 def _band(score):
+    """Map a combined score onto the approve/challenge/block bands."""
     if score > CHALLENGE_MAX:
         return "block"
     if score > APPROVE_MAX:
@@ -145,10 +147,15 @@ def _band(score):
 
 
 def _hybrid_verdict(features, ml_proba):
-    """Reproduce hybrid_scorer logic with a fold-trained model's probability
-    (the only intentional difference from production: the ML source)."""
+    """Reproduce hybrid_scorer.score_session_hybrid with a fold-trained model's
+    probability (the only intentional difference from production: the ML
+    source). Mirrors BOTH production overrides -- the hardware/context cap and
+    the keystroke-only cap -- so the harness's hybrid verdict matches the
+    live API's verdict exactly.
+    """
     rules_decision = score_session(features)
-    combined = max(rules_decision.score, round(float(ml_proba) * 100))
+    ml_points = round(float(ml_proba) * 100)
+    combined = max(rules_decision.score, ml_points)
     verdict = _band(combined)
     if (
         verdict == "block"
@@ -156,7 +163,68 @@ def _hybrid_verdict(features, ml_proba):
         and is_context_normal(features)
     ):
         verdict = "challenge"
+    # Keystroke override (production hybrid_scorer.py): a block whose ONLY
+    # cause is typing deviation -- removing keystroke's rules contribution
+    # drops the combined score under the block floor AND the ML model alone
+    # would not block -- is softened to challenge.
+    kc_reasons = [
+        r for r in rules_decision.triggered_reasons
+        if r["code"] == "keystroke_deviation"
+    ]
+    if verdict == "block" and kc_reasons:
+        rules_wo_keystroke = rules_decision.score - kc_reasons[0]["weight"]
+        if max(rules_wo_keystroke, ml_points) <= CHALLENGE_MAX:
+            verdict = "challenge"
     return verdict, combined
+
+
+def _secondary_verdict(ft, s, hybrid_verdict, hybrid_score, train_sessions,
+                       labels):
+    """Reproduce the verified-secondary-behaviour stage of the live pipeline.
+
+    The live profile is grown from real OTP verifications, which do not exist
+    in the synthetic corpus, so the HONEST proxy here is the user's own
+    TRAINING-FOLD benign (non-attack) sessions strictly before this test
+    session -- causal, de-leaked, and labelled benign exactly like a step-up
+    verification proves the customer. Mirrors secondary_behavior.py's gate:
+
+      * only a hybrid ``challenge`` is eligible (approve/block never moved);
+      * dormant until the profile window has >= MIN_VERIFICATIONS_TO_CONFIGURE
+        verified contexts (live profile count);
+      * escalate to ``block`` when the session matches none of the verified
+        window; ``confirm`` keeps the challenge.
+
+    Returns ``(verdict, secondary_action)``.
+    """
+    from core.secondary_behavior import (
+        CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE,
+        ESCALATE_IF_FAMILIARITY_BELOW,
+        MIN_VERIFICATIONS_TO_CONFIGURE,
+        VERIFIED_HISTORY_LIMIT,
+        _session_context,
+        familiarity_score,
+        secondary_action_for,
+    )
+    if hybrid_verdict != "challenge":
+        return hybrid_verdict, None
+    candidates = [
+        x for x in train_sessions
+        if x.user_id == s.user_id and x.timestamp < s.timestamp
+        and not _is_attack(x, labels)
+    ]
+    if len(candidates) < MIN_VERIFICATIONS_TO_CONFIGURE:
+        return hybrid_verdict, None
+    contexts = [
+        _session_context(c)
+        for c in candidates[-VERIFIED_HISTORY_LIMIT:]
+    ]
+    familiarity = familiarity_score(s, contexts)
+    action = secondary_action_for(familiarity)
+    if action == "escalate":
+        return "block", action
+    if action == "confirm":
+        return hybrid_verdict, "confirm"
+    return hybrid_verdict, None
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +233,8 @@ def _hybrid_verdict(features, ml_proba):
 
 
 def evaluate_fold(sessions, labels, kinds, y, train_idx, test_idx):
+    """Run one train/test fold: de-leaked features, a trained model, and
+    all four scorer views."""
     train_sessions = [sessions[i] for i in train_idx]
     test_sessions = [sessions[i] for i in test_idx]
 
@@ -220,9 +290,19 @@ def evaluate_fold(sessions, labels, kinds, y, train_idx, test_idx):
     hybrid_pairs = [_hybrid_verdict(ft, p)
                     for ft, p in zip((r[0] for r in test_rows), ml_proba)]
     hybrid_v = [h for h, _ in hybrid_pairs]
+    # Secondary stage over the hybrid verdict (verified-behaviour profile
+    # proxied by the user's causal training-fold benign sessions).
+    secondary_pairs = [
+        _secondary_verdict(ft, s, hv, hs, train_sessions, labels)
+        for ft, s, (hv, hs) in zip(
+            (r[0] for r in test_rows), (s for _, s in test_rows), hybrid_pairs
+        )
+    ]
+    secondary_v = [v for v, _ in secondary_pairs]
 
     res = {}
-    for name, verdicts in (("rules", rules_v), ("ml", ml_v), ("hybrid", hybrid_v)):
+    for name, verdicts in (("rules", rules_v), ("ml", ml_v), ("hybrid", hybrid_v),
+                           ("hybrid+secondary", secondary_v)):
         y_hard = np.array([v == "block" for v in verdicts]).astype(int)
         cm = confusion_matrix(y_true, y_hard, labels=[0, 1])
         res[f"{name}_precision"] = precision_score(y_true, y_hard, zero_division=0)
@@ -267,6 +347,7 @@ def evaluate_fold(sessions, labels, kinds, y, train_idx, test_idx):
 
 
 def _mean_std(vals):
+    """Mean and standard deviation of a metric across CV repeats."""
     arr = np.asarray(vals, dtype=float)
     return float(arr.mean()), float(arr.std())
 
@@ -277,10 +358,13 @@ def _fm(vals):
 
 
 def _ratio(num, den):
+    """Safe ratio that yields NaN instead of dividing by zero."""
     return (float(num) / float(den)) if den else float("nan")
 
 
 def main():
+    """Entry point: run repeated stratified cross-validation and print a
+    single aggregated comparison of the four scoring views."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--splits", type=int, default=5)
     ap.add_argument("--repeats", type=int, default=10)
@@ -305,7 +389,7 @@ def main():
         n_splits=args.splits, n_repeats=args.repeats, random_state=args.seed
     )
 
-    names = ("rules", "ml", "hybrid")
+    names = ("rules", "ml", "hybrid", "hybrid+secondary")
     agg = {n: {"precision": [], "recall": [], "f1": [], "pr_auc": [],
                "caught": [], "npos": [], "simswap_fp": [], "nsimswap": [],
                "family_fp": [], "nfamily": [], "cm": None}
@@ -335,13 +419,13 @@ def main():
     print()
     print("PRIMARY / CORE METRICS  (mean +/- std over "
           f"{n_folds} folds = {args.splits} x {args.repeats})")
-    hdr = (f"{'scorer':<8} {'precision':>15} {'recall':>15} {'F1':>15} "
+    hdr = (f"{'scorer':<18} {'precision':>15} {'recall':>15} {'F1':>15} "
            f"{'PR-AUC':>15}")
     print(hdr)
     print("-" * len(hdr))
     for n in names:
         a = agg[n]
-        print(f"{n:<8} {_fm(a['precision']):>15} {_fm(a['recall']):>15} "
+        print(f"{n:<18} {_fm(a['precision']):>15} {_fm(a['recall']):>15} "
               f"{_fm(a['f1']):>15} {_fm(a['pr_auc']):>15}")
 
     print()
@@ -353,7 +437,7 @@ def main():
         tp, fp = int(cm[1, 1]), int(cm[0, 1])
         prec = tp / (tp + fp) if (tp + fp) else 0.0
         rec = tp / (tp + int(cm[1, 0])) if (tp + int(cm[1, 0])) else 0.0
-        print(f"  {n:<8} TN={int(cm[0,0]):<6} FP={fp:<6} FN={int(cm[1,0]):<6} "
+        print(f"  {n:<18} TN={int(cm[0,0]):<6} FP={fp:<6} FN={int(cm[1,0]):<6} "
               f"TP={tp:<6}  precision={prec:.4f}  recall={rec:.4f}")
 
     print()
@@ -366,7 +450,7 @@ def main():
         nsswap = int(sum(a["nsimswap"]))
         fam = int(sum(a["family_fp"]))
         nfam = int(sum(a["nfamily"]))
-        print(f"  {n:<8} attacks-caught={caught}/{npos} "
+        print(f"  {n:<18} attacks-caught={caught}/{npos} "
               f"({_ratio(caught, npos)*100:.1f}%)   "
               f"sim-swap false-block={sswap}/{nsswap}   "
               f"family false-block={fam}/{nfam}")

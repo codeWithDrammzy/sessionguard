@@ -789,6 +789,114 @@ class ConfirmedOutcome(models.Model):
         )
 
 
+class SecondaryBehaviorProfile(models.Model):
+    """
+    The customer's VERIFIED behaviour pattern, learned from successful
+    step-up (OTP) verifications -- NOT from human-confirmed labels.
+
+    Distinction by design:
+      * ``ConfirmedOutcome`` is a HUMAN-reviewer judgement used only at
+        retrain time; it is never consulted live.
+      * ``SecondaryBehaviorProfile`` is built automatically from the one
+        thing the system proved WITHOUT trusting anyone's label: a customer
+        who completed SMS-step-up verification for a challenged transfer was
+        demonstrably holding their phone/SIM (or demonstrably reached the
+        challenge's transaction). That proof is the seed of this profile.
+
+    ``verified_contexts`` is a FIFO window of at most ``VERIFIED_HISTORY_LIMIT``
+    (core/secondary_behavior.py) snapshots -- the profile is a RECENT,
+    self-expiring picture, deliberately NOT a permanent whitelist. Old
+    verified behaviour ages out as the window slides. ``verification_count``
+    decides when the profile becomes `configured`
+    (``>= MIN_VERIFICATIONS_TO_CONFIGURE``); before that the secondary gate is
+    dormant. Only a *challenge* verdict ever consults it, and it can only
+    confirm the challenge or escalate it one band to block -- it never
+    manufactures a block from an approval and never softens a block.
+
+    In addition to contextual dimensions, OTP-verified APP sessions seed a
+    derived typing-rhythm profile (independent of the primary engine's 5-to-20
+    session baseline). Once enough verified typing exists, the challenged
+    session's rhythm CAPS familiarity -- an "alternate legitimate user" (or an
+    impostor) with a very different rhythm on the original account holder's
+    rooted device is never confirmed from context alone.
+    """
+
+    # One profile per protected account.
+    user = models.OneToOneField(
+        BankUser,
+        on_delete=models.CASCADE,
+        related_name="secondary_behavior_profile",
+        help_text=(
+            "The account whose OTP-verified behaviour this profile encodes."
+        ),
+    )
+
+    # How many successful verifications have been recorded in total. The
+    # profile becomes 'configured' (consulted by the gate) at >=
+    # MIN_VERIFICATIONS_TO_CONFIGURE.
+    verification_count = models.PositiveIntegerField(
+        default=0,
+        help_text=(
+            "Number of successful step-up verifications recorded for this "
+            "account."
+        ),
+    )
+
+    # Rolling window of verified context snapshots (most-recent-first prune
+    # in core/secondary_behavior.py). Each entry mirrors the shape returned
+    # by that module's _session_context(): device/sim/location/recipient/
+    # hour/amount plus a derived "keystroke" rhythm sub-dict when the session
+    # had timing data. A plain JSONField keeps the model migration-friendly;
+    # the FIFO cap and pruning live in the module that owns the semantics.
+    verified_contexts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Rolling window of verified-context snapshots (capped in "
+            "secondary_behavior.py to VERIFIED_HISTORY_LIMIT); OTP-verified "
+            "app sessions also carry their derived typing-rhythm features."
+        ),
+    )
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "secondary behavior profile"
+
+    def __str__(self):
+        return (
+            f"SecondaryBehaviorProfile({self.user_id} "
+            f"verified={self.verification_count})"
+        )
+
+
+class SecondaryVerification(models.Model):
+    """
+    ONE successful step-up verification, attached 1:1 to its Session.
+
+    The OneToOne anchor IS the idempotency guarantee: calling
+    ``record_verification()`` twice for the same session is a no-op, so a
+    double-submitted (or replayed) release request can never inflate the
+    profile. Created only on the bank ledger hold-release path -- i.e. only
+    after the customer has actually completed OTP step-up.
+    """
+
+    session = models.OneToOneField(
+        Session,
+        on_delete=models.CASCADE,
+        related_name="secondary_verification",
+        help_text="The session whose OTP verification succeeded.",
+    )
+
+    verified_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-verified_at"]
+
+    def __str__(self):
+        return f"SecondaryVerification({self.session_id})"
+
+
 class RecipientDirectory(models.Model):
     """
     Account number -> display name mapping for the bank demo.

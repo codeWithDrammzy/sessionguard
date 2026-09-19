@@ -149,6 +149,7 @@ class SessionEventSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
+        """Sanitize incoming evidence fields, gathering non-fatal warnings."""
         warnings = []
         channel = attrs["channel"]
         fingerprint = attrs.get("device_fingerprint")

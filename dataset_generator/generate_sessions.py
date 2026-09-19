@@ -85,6 +85,7 @@ def deterministic_uuid(rng):
 
 
 def _hex_string(rng, length):
+    """Random hex token of length `length` from the seeded RNG."""
     return "".join(rng.choices(_HEX, k=length))
 
 
@@ -316,6 +317,7 @@ def build_transactions_for_user(rng, ctx, sessions):
 # ---------------------------------------------------------------------------
 
 def main():
+    """Generate the full baseline session/transaction dataset."""
     rng = random.Random(SEED)
     now = timezone.now()
 
@@ -372,6 +374,7 @@ def main():
 
 
 def print_summary(now, users, sessions, transactions):
+    """Print a concise census of what was generated."""
     channels = Counter(s.channel for s in sessions)
     total_sessions = len(sessions)
     total_tx = len(transactions)

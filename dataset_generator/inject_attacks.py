@@ -108,14 +108,17 @@ _RECIPIENT_ALPHABET = string.ascii_uppercase + string.digits
 
 
 def deterministic_uuid(rng):
+    """UUIDv4-format PK derived from the seeded RNG."""
     return uuid.UUID(int=rng.getrandbits(128), version=4)
 
 
 def _hex_string(rng, length=64):
+    """Random hex token of `length` chars from the seeded RNG."""
     return "".join(rng.choices(_HEX, k=length))
 
 
 def _round_to_step(value, step=50):
+    """Round an amount up to the nearest multiple of `step` (min `step`)."""
     return max(step, int(round(value / step)) * step)
 
 
@@ -130,6 +133,7 @@ def _fresh(rng, alphabet, length, forbidden):
 
 
 def _fresh_ip(rng, forbidden):
+    """Random AFRINIC-looking IP guaranteed absent from `forbidden`."""
     while True:
         ip = "%d.%d.%d.%d" % (
             rng.choice([41, 105, 197]),
@@ -518,6 +522,7 @@ def build_sim_swap_attack(rng, profile, now, obvious):
 # ---------------------------------------------------------------------------
 
 def main():
+    """Inject the seeded attack sessions (target counts per type/channel)."""
     rng = random.Random(SEED)
     # Anchor every attack AFTER the most recent baseline session, not to the
     # wall clock: attacks must always postdate the victim's last stored

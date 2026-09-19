@@ -156,6 +156,7 @@ class DegradedDecision(RiskDecision):
 
 
 def _hour_inside_cached_windows(windows, hour: int) -> bool:
+    """True if `hour` falls within any [start, end) login window."""
     for start, end in windows or []:
         if start <= hour < end:
             return True
@@ -311,6 +312,10 @@ def process_resync_queue():
             features = compute_features(session)
             features.save()
         decision = score_session_hybrid(features)
+        # A resynced event is online traffic: it goes through the SAME
+        # secondary (verified-behaviour) gate as any other online score.
+        from core.secondary_behavior import apply_secondary_behavior
+        decision = apply_secondary_behavior(session, decision)
 
         deg_v, deg_s = entry.get("degraded_verdict"), entry.get("degraded_score")
         if deg_v == decision.verdict:
@@ -375,7 +380,12 @@ def score_session_with_fallback(session, features=None):
                     "features must be provided when passing a raw payload "
                     "while online."
                 )
-        return score_session_hybrid(features)
+        decision = score_session_hybrid(features)
+        # Secondary stage: consults the customer's OTP-verified behaviour
+        # profile. Only ever acts on a "challenge" (confirm it or escalate it
+        # one band to block); approve/block pass through untouched.
+        from core.secondary_behavior import apply_secondary_behavior
+        return apply_secondary_behavior(session, decision)
 
     user = BankUser.objects.get(user_id=event["user_id"])
     cached_profile = build_local_cache(
@@ -390,6 +400,7 @@ DEMO_TOWER = "TWR-SMOKE-OFFLINE"
 
 
 def _pick_user(prefer_channel, hour):
+    """Pick a demo user on the channel, preferring one active at `hour`."""
     for u in BankUser.objects.filter(channel_preference=prefer_channel):
         if not (u.typical_recipients and u.typical_transfer_min
                 and u.typical_transfer_max):
@@ -406,6 +417,7 @@ def _pick_user(prefer_channel, hour):
 
 
 def _baseline_anchor(user):
+    """Most recent baseline session before today, used for time-based checks."""
     start_today = timezone.now().replace(
         hour=0, minute=0, second=0, microsecond=0)
     return (Session.objects.filter(

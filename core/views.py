@@ -29,12 +29,23 @@ Response 200:
     "debug_signals": [{"code": "ml_model_risk", "weight": 88}],
     "ml_probability": 0.88,
     "context_override_applied": true,
+    "secondary_profile_configured": false,
+    "secondary_verification_count": 0,
+    "secondary_familiarity": null,
+    "secondary_action": null,
     "warnings": []
 }
 
 ``customer_message`` is what a bank tells the customer.
 ``internal_note``/``debug_signals`` are for logs and demos only -- a real
 production API would not expose them to end users.
+
+The ``secondary_*`` fields report the verified-behaviour stage: whether the
+customer's OTP-verified profile was configured, how many verifications it has,
+the 0..1 familiarity of THIS session against that verified window, and the
+action taken (``None`` dormant / ``"none"`` / ``"escalate"`` (challenge ->
+block) / ``"confirm"``). They are ``None``/``False``/``0`` on degraded
+(offline) decisions and whenever the primary verdict was not a challenge.
 
 Errors: 400 invalid input | 404 unknown user_id | 500 generic body with
 the real exception logged server-side.
@@ -236,6 +247,18 @@ class SessionEventView(APIView):
                 getattr(decision, "context_override_applied", False)
             ),
             "is_degraded": bool(getattr(decision, "is_degraded", False)),
+            # Verified-secondary-behaviour stage. Present (or None/False on
+            # degraded decisions and non-challenge verdicts) for transparency.
+            "secondary_profile_configured": bool(
+                getattr(decision, "secondary_profile_configured", False)
+            ),
+            "secondary_verification_count": getattr(
+                decision, "secondary_verification_count", 0
+            ),
+            "secondary_familiarity": getattr(
+                decision, "secondary_familiarity", None
+            ),
+            "secondary_action": getattr(decision, "secondary_action", None),
         }
 
 

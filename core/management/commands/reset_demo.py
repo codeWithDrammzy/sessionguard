@@ -14,6 +14,8 @@ What it removes (each documented in core/):
 * Demo Control-Room debris -- sessions stamped with a reserved debris marker
   (DEMO_TOWER / SMOKE_TOWER / OFFLINE_TOWER, shared with demo_scenarios).
 * Smoke-test debris -- sessions stamped SMOKE_TOWER (same whitelist).
+* Secondary-behaviour state -- OTP verifications and the profiles they build
+  (live runtime artifacts, never part of the seeded baseline).
 * offline_queue.jsonl -- stale resync entries from an offline demo run, so a
   judge never sees phantom queued traffic.
 
@@ -46,7 +48,13 @@ class Command(BaseCommand):
         check = options["check"]
 
         from core.demo_scenarios import DEBRIS_TOWERS
-        from core.models import BankUser, Session, BehavioralFeatures
+        from core.models import (
+            BankUser,
+            BehavioralFeatures,
+            SecondaryBehaviorProfile,
+            SecondaryVerification,
+            Session,
+        )
 
         # --- 1. Browser-created test accounts ---------------------------------
         test_users = list(
@@ -67,11 +75,23 @@ class Command(BaseCommand):
         # those real rows (measured at 84 on one Control Room load).
         marked = Session.objects.filter(ip_or_cell_tower_id__in=DEBRIS_TOWERS)
 
+        # --- 3. Secondary-behaviour runtime artifacts -------------------------
+        # OTP verifications and the profiles they build are demo-run runtime
+        # state grown on top of the seeded baseline (the 250 seeded customers
+        # have none). reset_demo returns the demo to a pristine un-verified
+        # state so the "configured at 3 verifications" story replays cleanly.
+        # (Deleting sessions/users would cascade these anyway; this is an
+        # explicit, countable wipe of the live side of the ledger.)
+        verifications = SecondaryVerification.objects.all()
+        profiles = SecondaryBehaviorProfile.objects.all()
+
         counts = {
             "test_accounts": len(test_users),
             "orphan_feature_rows": orphan_features.count(),
             "orphan_session_rows": orphan_sessions.count(),
             "demo_marker_sessions": marked.count(),
+            "secondary_verifications": verifications.count(),
+            "secondary_profiles": profiles.count(),
             "offline_queue_entries": (
                 sum(1 for _ in open(QUEUE_PATH, "r", encoding="utf-8"))
                 if os.path.exists(QUEUE_PATH)
@@ -92,8 +112,10 @@ class Command(BaseCommand):
         orphan_sessions.delete()
         orphan_features.delete()
         marked.delete()
+        verifications.delete()
+        profiles.delete()
 
-        # --- 3. Clear the offline resync queue --------------------------------
+        # --- 4. Clear the offline resync queue --------------------------------
         if os.path.exists(QUEUE_PATH):
             open(QUEUE_PATH, "w", encoding="utf-8").close()
             self.stdout.write("  offline_queue.jsonl cleared.")

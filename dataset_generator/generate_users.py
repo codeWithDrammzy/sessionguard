@@ -288,6 +288,7 @@ def print_summary():
 
 
 def main():
+    """Generate (or wipe-and-regenerate, unless --keep) the BankUser set."""
     rng = random.Random(SEED)
 
     existing = BankUser.objects.count()

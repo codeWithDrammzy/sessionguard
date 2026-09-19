@@ -96,6 +96,8 @@ class RiskDecision:
 
 
 def _band(score):
+    """Map a raw risk score onto the approve (0-29) / challenge (30-59) /
+    block (60+) verdict bands."""
     if score >= 60:
         return "block"
     if score >= 30:
@@ -186,6 +188,7 @@ def score_session(features):
 # ---------------------------------------------------------------------------
 
 def _verdict_counts(decisions):
+    """Tally approve/challenge/block across a list of scored decisions."""
     c = {"approve": 0, "challenge": 0, "block": 0}
     for d in decisions:
         c[d.verdict] += 1

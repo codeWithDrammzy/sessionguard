@@ -244,6 +244,7 @@ def _keystroke_profile(user):
 
 
 def _mid_amount(user) -> str:
+    """Midpoint of the user's transfer band as a rounded string."""
     mid = ((user.typical_transfer_min + user.typical_transfer_max) / 2)
     return str(mid.quantize(Decimal("0.01")))
 

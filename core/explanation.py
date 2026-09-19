@@ -105,6 +105,10 @@ REASON_TEMPLATES = {
         "systems were temporarily unavailable",
     # context_normal_override intentionally has NO template here: it softens
     # a decision internally and is surfaced via the analyst note instead.
+    # secondary_behavior_escalation / secondary_behavior_confirm likewise
+    # have NO customer-facing template: they record that the challenged
+    # session was weighed against the customer's OTP-verified behaviour, and
+    # surface through the analyst note (never in the top-2 customer reasons).
 }
 
 _INTERNAL_OVERRIDE_NOTE = (
@@ -115,6 +119,18 @@ _INTERNAL_OVERRIDE_NOTE = (
 _KEYSTROKE_OVERRIDE_NOTE = (
     "Note: typing rhythm was the only abnormal signal in this session, so "
     "verification was requested instead of a hard block."
+)
+
+_SECONDARY_ESCALATION_NOTE = (
+    "Note: this session was already flagged for verification, and none of "
+    "its signals matched behaviour this customer has previously verified "
+    "(OTP-confirmed), so the challenge was escalated to a hard block."
+)
+
+_SECONDARY_CONFIRM_NOTE = (
+    "Note: this session's signals match behaviour this customer has "
+    "previously verified (OTP-confirmed); with the challenge still suspicious, "
+    "proportional step-up verification was kept."
 )
 
 
@@ -151,6 +167,7 @@ def explain_decision(decision):
     keystroke_override_fired = bool(
         getattr(decision, "keystroke_override_applied", False)
     )
+    secondary_action = getattr(decision, "secondary_action", None)
     reason_codes = [r["code"] for r in decision.triggered_reasons]
     # Degraded mode (offline_fallback): the decision was made with a cached
     # snapshot only. Customers get an honest transparency clause; the code
@@ -178,7 +195,9 @@ def explain_decision(decision):
             r for r in decision.triggered_reasons
             if r["code"] not in ("context_normal_override",
                                  "keystroke_override",
-                                 "offline_degraded_check")
+                                 "offline_degraded_check",
+                                 "secondary_behavior_escalation",
+                                 "secondary_behavior_confirm")
         ]
         # Ranking: concrete rule causes lead (by weight); the ML phrase is a
         # DERIVED SUMMARY of those same signals, not independent evidence,
@@ -221,6 +240,10 @@ def explain_decision(decision):
         return customer, _INTERNAL_OVERRIDE_NOTE
     if keystroke_override_fired:
         return customer, _KEYSTROKE_OVERRIDE_NOTE
+    if secondary_action == "escalate":
+        return customer, _SECONDARY_ESCALATION_NOTE
+    if secondary_action == "confirm":
+        return customer, _SECONDARY_CONFIRM_NOTE
     return customer
 
 

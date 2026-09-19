@@ -12,7 +12,7 @@ The single decision function the future API endpoint calls. Combines:
 WHY THE OVERRIDE EXISTS
 -----------------------
 Trained on this dataset, the ML model learned "device/SIM changed => fraud"
-so aggressively (coefficients +6.6/+5.9) that genuine_sim_swap anomalies --
+so aggressively (coefficients +6.48/+5.40, the retrained bundle values) that genuine_sim_swap anomalies --
 real customers recovering from a lost phone -- scored p>=0.94 and would be
 blocked 4/4. The rules engine approved them but was blind to patient
 attacks. The insight: HARDWARE CHANGE IS AMBIGUOUS ON ITS OWN. Its meaning
@@ -267,6 +267,8 @@ def _metrics_from(decisions, kinds):
 
 
 def score_all_sessions_hybrid():
+    """Score every labelled session with the hybrid view and print the
+    three-way verdict report (rules / ML / hybrid)."""
     line = "=" * 78
 
     rows = []  # (kind, rules_dec, ml_flagged, hybrid_dec)

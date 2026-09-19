@@ -31,21 +31,27 @@ from django.test import TestCase
 from django.utils import timezone
 
 from core.feature_engine import compute_features
-from core.hybrid_scorer import score_session_hybrid
+from core.hybrid_scorer import HybridDecision, score_session_hybrid
 from core.ml_model import FEATURE_COLUMNS, features_to_vector, _load_bundle
 from core.models import (
     BankUser,
     BehavioralFeatures,
     KeystrokeDynamics,
     Session,
+    Transaction,
     resolve_combined_device_location_flag,
 )
 from core.offline_fallback import build_local_cache, score_session_offline
 from core.explanation import explain_decision
 from core.rules_engine import CHALLENGE_MAX, WEIGHTS, score_session
+from core.secondary_behavior import (
+    CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE,
+    ESCALATE_IF_FAMILIARITY_BELOW,
+)
 
 
 def make_user(**kw):
+    """Create a BankUser with sane default habits, overridable per test."""
     defaults = dict(
         typical_login_hours=[[8, 22]],
         typical_transfer_min=1000,
@@ -59,6 +65,7 @@ def make_user(**kw):
 
 def make_session(user, ts, *, device="dev-A", sim="sim-1", geo="s1tstzz",
                  channel="app", duration=60, tower="TWR-1"):
+    """Create a Session row with stable per-test defaults."""
     return Session.objects.create(
         user=user,
         channel=channel,
@@ -74,6 +81,7 @@ def make_session(user, ts, *, device="dev-A", sim="sim-1", geo="s1tstzz",
 def make_keystroke(session, hold=150.0, interval=1000.0, cpm=55.0,
                    failures=None, hold_std=None, interval_std=None,
                    longest_pause=None, backspaces=None):
+    """Create a KeystrokeDynamics row for a session with stable defaults."""
     return KeystrokeDynamics.objects.create(
         session=session,
         avg_hold_time_ms=hold,
@@ -812,3 +820,447 @@ class DemoScenarioFixTests(TestCase):
             "normal login window so the verdict never depends on the "
             "wall-clock demo hour",
         )
+
+
+class SecondaryBehaviorProfileTests(TestCase):
+    """The verified-secondary-behaviour pattern: a bounded, idempotent,
+    customer-isolated profile that can only make sense of the challenges it
+    is allowed to touch (confirm / escalate challenge -> block; never touches
+    approve or block)."""
+
+    BASE = None
+
+    def _profile(self, user):
+        """Fresh DB read of a user's profile (the reverse OneToOne accessor
+        caches badly after get_or_create, so never trust it for assertions)."""
+        from core.models import SecondaryBehaviorProfile
+        return SecondaryBehaviorProfile.objects.filter(user=user).first()
+
+    def _verified_user(self, n=3, amount=25000.0, recipient="BNF-0001",
+                       device="dev-A", sim="sim-1", geo="s1tstzz"):
+        """A user with ``n`` successful verifications, each a distinct
+        session sharing the same verified context."""
+        from core.secondary_behavior import record_verification
+        user = make_user(typical_recipients=[recipient, "BNF-0002"])
+        self.BASE = timezone.now().replace(minute=27, second=0, microsecond=0)
+        for i in range(n):
+            ts = self.BASE - timedelta(minutes=10 * (n - i))
+            s = make_session(user, ts, device=device, sim=sim, geo=geo)
+            Transaction.objects.create(
+                session=s, timestamp=ts, amount=amount,
+                recipient_id=recipient, is_new_recipient=False,
+            )
+            record_verification(s)
+        return user
+
+    def _challenge_decision(self, session):
+        return HybridDecision(
+            session_id=str(session.session_id),
+            score=45,
+            verdict="challenge",
+            triggered_reasons=[{"code": "context_normal_override", "weight": 0}],
+        )
+
+    def test_dormant_below_three_verifications(self):
+        from core.secondary_behavior import (
+            MIN_VERIFICATIONS_TO_CONFIGURE, apply_secondary_behavior,
+        )
+        user = self._verified_user(n=2)
+        profile = self._profile(user)
+        self.assertEqual(profile.verification_count, 2)
+        self.assertLess(profile.verification_count,
+                        MIN_VERIFICATIONS_TO_CONFIGURE)
+        s = make_session(user, self.BASE, device="dev-ZZZ", sim="SIM-ZZZ",
+                         geo="s2fffff")
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        # Dormant: verdict untouched, no secondary action taken.
+        self.assertEqual(d.verdict, "challenge")
+        self.assertFalse(d.secondary_profile_configured)
+        self.assertEqual(d.secondary_verification_count, 2)
+        self.assertIsNone(d.secondary_action)
+        self.assertNotIn("secondary_behavior_escalation",
+                         [r["code"] for r in d.triggered_reasons])
+
+    def test_configured_at_three_verifications(self):
+        from core.secondary_behavior import (
+            MIN_VERIFICATIONS_TO_CONFIGURE,
+        )
+        user = self._verified_user(n=3)
+        self.assertEqual(self._profile(user).verification_count,
+                         MIN_VERIFICATIONS_TO_CONFIGURE)
+
+    def test_escalate_challenge_matching_no_verified_behaviour(self):
+        from core.secondary_behavior import apply_secondary_behavior
+        user = self._verified_user(n=3)
+        # A challenged session whose entire context is alien to everything
+        # this customer has ever OTP-verified.
+        s = make_session(user, self.BASE + timedelta(hours=12),
+                         device="dev-ZZZ", sim="SIM-ZZZ", geo="s2fffff")
+        Transaction.objects.create(session=s, timestamp=s.timestamp,
+                                   amount=99999, recipient_id="BNF-9999",
+                                   is_new_recipient=True)
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        self.assertTrue(d.secondary_profile_configured)
+        self.assertEqual(d.secondary_action, "escalate")
+        self.assertEqual(d.verdict, "block")
+        self.assertLess(d.secondary_familiarity,
+                        ESCALATE_IF_FAMILIARITY_BELOW)
+        self.assertIn("secondary_behavior_escalation",
+                      [r["code"] for r in d.triggered_reasons])
+
+    def test_confirm_challenge_matching_verified_behaviour(self):
+        from core.secondary_behavior import (
+            CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE, apply_secondary_behavior,
+        )
+        user = self._verified_user(n=3)
+        # The exact verified context: same device/SIM/location/recipient,
+        # same hour, same amount.
+        ts = self.BASE + timedelta(minutes=5)
+        s = make_session(user, ts, device="dev-A", sim="sim-1", geo="s1tstzz")
+        Transaction.objects.create(session=s, timestamp=ts, amount=25000,
+                                   recipient_id="BNF-0001",
+                                   is_new_recipient=False)
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        self.assertTrue(d.secondary_profile_configured)
+        self.assertEqual(d.secondary_action, "confirm")
+        self.assertEqual(d.verdict, "challenge")  # confirmed, not blocked
+        self.assertGreaterEqual(d.secondary_familiarity,
+                                CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE)
+        self.assertIn("secondary_behavior_confirm",
+                      [r["code"] for r in d.triggered_reasons])
+
+    def test_mid_range_familiarity_left_alone(self):
+        from core.secondary_behavior import (
+            CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE,
+            ESCALATE_IF_FAMILIARITY_BELOW, apply_secondary_behavior,
+        )
+        user = self._verified_user(n=3)
+        # device + SIM match the verified window (weights 0.25 + 0.20 = 0.45)
+        # but location, recipient, hour and amount are entirely alien
+        # (0.0 on the remaining 0.55 weight) -> familiarity 0.45, strictly
+        # between the thresholds (dormant middle ground: no escalation, no
+        # confirmation either -- the challenge is left exactly as-is).
+        ts = self.BASE + timedelta(hours=12)
+        s = make_session(user, ts, device="dev-A", sim="sim-1", geo="s2fffff")
+        Transaction.objects.create(session=s, timestamp=ts, amount=99999,
+                                   recipient_id="BNF-9999",
+                                   is_new_recipient=False)
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        self.assertEqual(d.secondary_action, "none")
+        self.assertEqual(d.verdict, "challenge")
+        self.assertGreaterEqual(d.secondary_familiarity,
+                                ESCALATE_IF_FAMILIARITY_BELOW)
+        self.assertLess(d.secondary_familiarity,
+                        CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE)
+        self.assertNotIn("secondary_behavior_escalation",
+                         [r["code"] for r in d.triggered_reasons])
+
+    def test_approve_and_block_verdicts_never_touched(self):
+        from core.secondary_behavior import apply_secondary_behavior
+        user = self._verified_user(n=3)
+        s = make_session(user, self.BASE, device="dev-ZZZ", sim="SIM-ZZZ",
+                         geo="s2fffff")
+        # approve must sail through untouched even with a configured profile.
+        approve = HybridDecision(
+            session_id=str(s.session_id), score=5, verdict="approve",
+            triggered_reasons=[],
+        )
+        out = apply_secondary_behavior(s, approve)
+        self.assertEqual(out.verdict, "approve")
+        self.assertEqual(out.triggered_reasons, [])
+        self.assertIsNone(getattr(out, "secondary_action", None))
+        # block is final here: the secondary stage never softens it.
+        block = HybridDecision(
+            session_id=str(s.session_id), score=80, verdict="block",
+            triggered_reasons=[{"code": "impossible_travel", "weight": 50}],
+        )
+        out2 = apply_secondary_behavior(s, block)
+        self.assertEqual(out2.verdict, "block")
+        self.assertIsNone(getattr(out2, "secondary_action", None))
+
+    def test_customer_isolation_between_profiles(self):
+        from core.secondary_behavior import apply_secondary_behavior
+        account_holder = self._verified_user(n=3)
+        # The alternate legitimate user verified its OWN (different) behaviour.
+        alternate_user = self._verified_user(
+            n=3, recipient="BNF-0066",
+            device="dev-B", sim="SIM-B", geo="s3aaaaa",
+        )
+        # The alternate legitimate user never verified dev-A: a challenge on
+        # dev-A must escalate against their profile even though the original
+        # account holder knows dev-A well. One profile's knowledge never leaks
+        # into another.
+        ts = self.BASE + timedelta(minutes=7)
+        s_b = make_session(alternate_user, ts, device="dev-A", sim="sim-1",
+                           geo="s1tstzz")
+        Transaction.objects.create(session=s_b, timestamp=ts, amount=25000,
+                                   recipient_id="BNF-0001",
+                                   is_new_recipient=True)
+        d = apply_secondary_behavior(s_b, self._challenge_decision(s_b))
+        self.assertEqual(d.verdict, "block")
+        self.assertEqual(d.secondary_action, "escalate")
+        # The original account holder's profile is untouched by the alternate
+        # legitimate user's session.
+        self.assertEqual(self._profile(account_holder).verification_count, 3)
+        self.assertEqual(self._profile(alternate_user).verification_count, 3)
+
+    def test_verified_window_is_fifo_not_a_whitelist(self):
+        from core.secondary_behavior import (
+            VERIFIED_HISTORY_LIMIT, record_verification,
+        )
+        user = make_user()
+        base = timezone.now().replace(minute=11, second=0, microsecond=0)
+        n = VERIFIED_HISTORY_LIMIT + 3
+        for i in range(n):
+            ts = base - timedelta(minutes=10 * (n - i))
+            s = make_session(user, ts, device=f"dev-{i}", sim=f"SIM-{i}",
+                             geo=f"s1tst{i}")
+            Transaction.objects.create(session=s, timestamp=ts, amount=1000,
+                                       recipient_id=f"BNF-{i:04d}",
+                                       is_new_recipient=False)
+            record_verification(s)
+        profile = self._profile(user)
+        ctx = profile.verified_contexts
+        self.assertEqual(len(ctx), VERIFIED_HISTORY_LIMIT)
+        # The OLDEST verified contexts are gone: no permanent whitelist.
+        self.assertNotIn("dev-0", [c["device"] for c in ctx])
+        self.assertEqual(ctx[-1]["device"], f"dev-{n - 1}")
+
+    def test_record_verification_is_idempotent(self):
+        from core.models import SecondaryVerification
+        from core.secondary_behavior import record_verification
+        user = make_user()
+        s = make_session(user, timezone.now(), device="dev-A", sim="sim-1",
+                         geo="s1tstzz")
+        Transaction.objects.create(session=s, timestamp=s.timestamp,
+                                   amount=1000, recipient_id="BNF-0001",
+                                   is_new_recipient=False)
+        created1, profile = record_verification(s)
+        created2, profile2 = record_verification(s)
+        self.assertTrue(created1)
+        self.assertFalse(created2)
+        self.assertEqual(SecondaryVerification.objects.filter(session=s).count(), 1)
+        self.assertEqual(profile.verification_count, 1)
+        self.assertEqual(profile2.verification_count, 1)
+        self.assertEqual(len(profile.verified_contexts), 1)  # no duplicate
+
+    def test_hold_release_records_verification_idempotently(self):
+        from core.bank_views import CHALLENGE_HOLDS
+        from core.models import SecondaryVerification
+        user = make_user()
+        now = timezone.now()
+        s = make_session(user, now, device="dev-A", sim="sim-1", geo="s1tstzz")
+        txn = Transaction.objects.create(session=s, timestamp=now, amount=1000,
+                                         recipient_id="BNF-0001",
+                                         is_new_recipient=False)
+        ref = "SG-TEST1234"
+        CHALLENGE_HOLDS[ref] = {
+            "user_id": str(user.user_id),
+            "transaction_pk": txn.pk,
+            "amount": "1000.00",
+            "recipient": "BNF-0001",
+        }
+        res1 = self.client.post(
+            "/api/bank/send-money/",
+            {"user_id": str(user.user_id), "challenge_reference": ref},
+            content_type="application/json",
+        )
+        self.assertEqual(res1.status_code, 200)
+        body1 = res1.json()
+        self.assertEqual(body1["verdict"], "approve")
+        self.assertEqual(body1["secondary_verification_count"], 1)
+        self.assertFalse(body1["secondary_profile_configured"])
+        # A replayed release of the SAME hold is expired (hold already
+        # consumed) and must not re-increment the profile.
+        res2 = self.client.post(
+            "/api/bank/send-money/",
+            {"user_id": str(user.user_id), "challenge_reference": ref},
+            content_type="application/json",
+        )
+        self.assertEqual(res2.json()["verdict"], "expired")
+        self.assertEqual(SecondaryVerification.objects.filter(session=s).count(), 1)
+        self.assertEqual(self._profile(user).verification_count, 1)
+
+    def test_session_event_response_includes_secondary_fields(self):
+        user = make_user()
+        now = timezone.now()
+        res = self.client.post(
+            "/api/session-event/",
+            {
+                "user_id": str(user.user_id),
+                "device_fingerprint": "dev-A",
+                "sim_id": "sim-1",
+                "ip_or_cell_tower_id": "41.2.3.4",
+                "location_geohash": "s1tstzz",
+                "session_duration_seconds": 60,
+                "transaction": {"amount": "25000.00", "recipient_id": "BNF-0001"},
+            },
+            content_type="application/json",
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["verdict"], "approve")
+        # Secondary fields present with dormant defaults for a fresh account.
+        self.assertFalse(body["secondary_profile_configured"])
+        self.assertEqual(body["secondary_verification_count"], 0)
+        self.assertIsNone(body["secondary_familiarity"])
+        self.assertIsNone(body["secondary_action"])
+
+
+class SecondaryKeystrokeBehaviorTests(TestCase):
+    """The verified-secondary profile also learns typing rhythm from OTP-
+    verified APP sessions. Keystroke similarity works as a CAP: a very
+    different rhythm (an alternate legitimate user or an impostor) can never
+    be CONFIRMED by an otherwise fully verified device/SIM/location context.
+    Sessions without typing data keep the pre-keystroke behaviour exactly.
+    """
+
+    def setUp(self):
+        self.BASE = timezone.now().replace(minute=27, second=0, microsecond=0)
+
+    def _verified_typist(self, n=3):
+        from core.secondary_behavior import record_verification
+        user = make_user(typical_recipients=["BNF-0001"])
+        holds = (150.0, 155.0, 148.0)
+        intervals = (1000.0, 990.0, 1010.0)
+        cpm = (55.0, 54.0, 56.0)
+        hold_stds = (25.0, 26.0, 24.0)
+        interval_stds = (60.0, 61.0, 59.0)
+        pauses = (1200.0, 1210.0, 1190.0)
+        backspaces = (0, 1, 0)
+        for i in range(n):
+            ts = self.BASE - timedelta(minutes=10 * (n - i))
+            s = make_session(user, ts, device="dev-A", sim="sim-1",
+                             geo="s1tstzz")
+            Transaction.objects.create(
+                session=s, timestamp=ts, amount=25000.0,
+                recipient_id="BNF-0001", is_new_recipient=False,
+            )
+            make_keystroke(
+                s, hold=holds[i % len(holds)],
+                interval=intervals[i % len(intervals)],
+                cpm=cpm[i % len(cpm)],
+                hold_std=hold_stds[i % len(hold_stds)],
+                interval_std=interval_stds[i % len(interval_stds)],
+                longest_pause=pauses[i % len(pauses)],
+                backspaces=backspaces[i % len(backspaces)],
+            )
+            record_verification(s)
+        return user
+
+    def _challenge_decision(self, session):
+        return HybridDecision(
+            session_id=str(session.session_id),
+            score=45,
+            verdict="challenge",
+            triggered_reasons=[{"code": "context_normal_override", "weight": 0}],
+        )
+
+    def _profile(self, user):
+        from core.models import SecondaryBehaviorProfile
+        return SecondaryBehaviorProfile.objects.get(user=user)
+
+    def _owner_challenge(self, user, **keystroke_kwargs):
+        """A challenge session presenting the fully verified context."""
+        ts = self.BASE + timedelta(minutes=5)
+        s = make_session(user, ts, device="dev-A", sim="sim-1", geo="s1tstzz")
+        Transaction.objects.create(
+            session=s, timestamp=ts, amount=25000.0,
+            recipient_id="BNF-0001", is_new_recipient=False,
+        )
+        make_keystroke(s, **keystroke_kwargs)
+        return s
+
+    def test_dormant_below_three_even_with_matching_typing(self):
+        from core.secondary_behavior import apply_secondary_behavior
+        user = self._verified_typist(n=2)
+        s = self._owner_challenge(user, hold=152.0, interval=1002.0, cpm=55.0)
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        # Gate still dormant at 2 verifications: no action even though the
+        # typing rhythm and context match the original account holder.
+        self.assertFalse(d.secondary_profile_configured)
+        self.assertEqual(d.secondary_verification_count, 2)
+        self.assertIsNone(d.secondary_action)
+        self.assertEqual(d.verdict, "challenge")
+
+    def test_activates_at_three_and_confirms_original_holder_rhythm(self):
+        from core.secondary_behavior import (
+            CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE, apply_secondary_behavior,
+        )
+        user = self._verified_typist(n=3)
+        s = self._owner_challenge(user, hold=152.0, interval=1002.0, cpm=55.0,
+                                  hold_std=25.0, interval_std=60.0,
+                                  longest_pause=1205.0, backspaces=0)
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        self.assertTrue(d.secondary_profile_configured)
+        self.assertEqual(d.secondary_verification_count, 3)
+        self.assertEqual(d.secondary_action, "confirm")
+        self.assertEqual(d.verdict, "challenge")  # confirmed, not blocked
+        self.assertGreaterEqual(d.secondary_familiarity,
+                                CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE)
+        self.assertIn("secondary_behavior_confirm",
+                      [r["code"] for r in d.triggered_reasons])
+
+    def test_matching_rhythm_scores_as_original_account_holder(self):
+        from core.secondary_behavior import (
+            CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE, _keystroke_features,
+            _keystroke_similarity,
+        )
+        user = self._verified_typist(n=3)
+        profile = self._profile(user)
+        s = self._owner_challenge(user, hold=152.0, interval=1005.0, cpm=55.0,
+                                  hold_std=25.0, interval_std=61.0,
+                                  longest_pause=1200.0, backspaces=0)
+        sim = _keystroke_similarity(_keystroke_features(s),
+                                    profile.verified_contexts)
+        self.assertIsNotNone(sim)
+        self.assertGreaterEqual(sim, CONFIRM_IF_FAMILIARITY_AT_OR_ABOVE)
+
+    def test_no_accidental_trust_for_a_very_different_rhythm(self):
+        from core.secondary_behavior import (
+            ESCALATE_IF_FAMILIARITY_BELOW, apply_secondary_behavior,
+        )
+        user = self._verified_typist(n=3)
+        # An alternate legitimate user on the original account holder's
+        # rooted device/SIM at the usual location/recipient/hour/amount --
+        # the ONLY difference is a completely foreign typing rhythm (slow,
+        # clipped, erratic, lots of backspaces).
+        s = self._owner_challenge(user, hold=90.0, interval=2500.0, cpm=25.0,
+                                  hold_std=250.0, interval_std=900.0,
+                                  longest_pause=4000.0, backspaces=6)
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        self.assertTrue(d.secondary_profile_configured)
+        # The foreign rhythm CAPS the (otherwise fully familiar) context score
+        # below the escalation threshold: never CONFIRMED from context alone.
+        self.assertEqual(d.secondary_action, "escalate")
+        self.assertEqual(d.verdict, "block")
+        self.assertLess(d.secondary_familiarity,
+                        ESCALATE_IF_FAMILIARITY_BELOW)
+        self.assertIn("secondary_behavior_escalation",
+                      [r["code"] for r in d.triggered_reasons])
+
+    def test_sessions_without_typing_data_keep_pre_keystroke_behaviour(self):
+        from core.secondary_behavior import (
+            apply_secondary_behavior, record_verification,
+        )
+        # Verified window WITHOUT keystroke rows -> no keystroke cap.
+        user = make_user(typical_recipients=["BNF-0001"])
+        for i in range(3):
+            ts = self.BASE - timedelta(minutes=10 * (3 - i))
+            s = make_session(user, ts, device="dev-A", sim="sim-1",
+                             geo="s1tstzz")
+            Transaction.objects.create(
+                session=s, timestamp=ts, amount=25000.0,
+                recipient_id="BNF-0001", is_new_recipient=False,
+            )
+            record_verification(s)
+        ts = self.BASE + timedelta(minutes=5)
+        s = make_session(user, ts, device="dev-A", sim="sim-1", geo="s1tstzz")
+        Transaction.objects.create(session=s, timestamp=ts, amount=25000,
+                                   recipient_id="BNF-0001",
+                                   is_new_recipient=False)
+        d = apply_secondary_behavior(s, self._challenge_decision(s))
+        # Full six-dimension context match -> confirmed, exactly as before
+        # the keystroke feature existed.
+        self.assertEqual(d.secondary_action, "confirm")
+        self.assertEqual(d.verdict, "challenge")

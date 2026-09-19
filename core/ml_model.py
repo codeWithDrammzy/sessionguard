@@ -99,6 +99,7 @@ def _vectorize(features, columns):
 
 
 def features_to_vector(features):
+    """Serialize a BehavioralFeatures row into the model's flat input vector."""
     return _vectorize(features, FEATURE_COLUMNS)
 
 
@@ -167,6 +168,7 @@ def build_dataset():
 
 
 def _counts(y_true, y_pred):
+    """Confusion-matrix counts (tp, fp, fn, tn) for a binary prediction."""
     tp = int(np.sum((y_true == 1) & (y_pred == 1)))
     fp = int(np.sum((y_true == 0) & (y_pred == 1)))
     fn = int(np.sum((y_true == 1) & (y_pred == 0)))
@@ -175,6 +177,7 @@ def _counts(y_true, y_pred):
 
 
 def _metrics(y_true, y_pred):
+    """Dict of count plus derived precision/recall/FPR for one decision."""
     tp, fp, fn, tn = _counts(y_true, y_pred)
     precision = tp / (tp + fp) if (tp + fp) else 0.0
     recall = tp / (tp + fn) if (tp + fn) else 0.0
@@ -331,6 +334,7 @@ _BUNDLE_CACHE = []
 
 
 def _load_bundle():
+    """Load the trained model bundle once, caching it for later calls."""
     if not _BUNDLE_CACHE:
         if not os.path.exists(MODEL_PATH):
             raise FileNotFoundError(
